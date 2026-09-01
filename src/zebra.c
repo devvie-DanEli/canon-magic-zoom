@@ -41,6 +41,7 @@
 #include "lvinfo.h"
 #include "powersave.h"
 #include "module.h"
+#include "../modules/dual_iso/dual_iso.h"
 
 #include "imgconv.h"
 #include "falsecolor.h"
