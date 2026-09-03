@@ -1662,8 +1662,6 @@ lens_set_kelvin(int k)
     msleep(20);
 }
 
-void
-
 void lens_set_wb_mode(int mode)
 {
     mode = COERCE(mode, 0, 9);
@@ -1672,6 +1670,7 @@ void lens_set_wb_mode(int mode)
     msleep(20);
 }
 
+void
 lens_set_kelvin_value_only(int k)
 {
     k = COERCE(k, KELVIN_MIN, KELVIN_MAX);
