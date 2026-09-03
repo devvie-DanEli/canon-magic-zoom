@@ -206,8 +206,8 @@ static CONFIG_INT( "zebra.raw.under", zebra_raw_underexposure,  1 );
 #define MZ_ALWAYS_ON            4
 static CONFIG_INT( "zoom.overlay", zoom_overlay_enabled, 0);
 #ifdef CONFIG_EOSM
-/* EOS M has no reliable zoom-in button; default Always On so Magic Zoom works. */
-static CONFIG_INT( "zoom.overlay.trig", zoom_overlay_trigger_mode, MZ_ALWAYS_ON);
+/* EOS M: default half-shutter trigger. Always On is in the submenu. */
+static CONFIG_INT( "zoom.overlay.trig", zoom_overlay_trigger_mode, 1);
 #else
 static CONFIG_INT( "zoom.overlay.trig", zoom_overlay_trigger_mode, MZ_TAKEOVER_ZOOM_IN_BTN);
 #endif
@@ -219,6 +219,13 @@ static CONFIG_INT( "zoom.overlay.pos", zoom_overlay_pos, 4); // less flicker whe
 static CONFIG_INT( "zoom.overlay.pos", zoom_overlay_pos, 1);
 #endif
 static CONFIG_INT( "zoom.overlay.split", zoom_overlay_split, 0);
+
+/* Slim: dial calls .select when present — must toggle ON/OFF, not open submenu.
+ * SET opens the submenu via EM_INLINE_ADJUST + children (menu_entry_select mode 3). */
+static void zoom_overlay_select(void *priv, int delta)
+{
+    menu_numeric_toggle((int *)priv, delta, 0, 1);
+}
 
 int get_zoom_overlay_trigger_mode() 
 { 
@@ -314,48 +321,26 @@ int nondigic_zoom_overlay_enabled()
         should_draw_zoom_overlay();
 }
 
-/* Dual ISO status comes from modules/dual_iso/dual_iso.h (WEAK_FUNC).
- * When the module is not loaded those stubs return 0. Do not redeclare
- * dual_iso_is_enabled / dual_iso_is_active as MODULE_FUNCTION pointers —
- * that conflicts with the header. */
+/* Dual ISO status: dual_iso.h WEAK_FUNC (0 if module not loaded). */
 
-/* "KILL FP/Zebras (Dual ISO Rec)": while Dual ISO is active (menu on
- * and/or actively applied while recording), temporarily hide software
- * focus peaking dots and/or zebras. Digic Auto Edge is handled in
- * tweaks.c via focus_peaking_killed_by_dual_iso_rec(). */
+/* KILL FP / KILL Zebras: only while RECORDING and Dual ISO is ON.
+ * Digic Auto Edge uses focus_peaking_killed_by_dual_iso_rec() from tweaks.c. */
 static CONFIG_INT("kill.zebra.dualiso.rec", kill_zebra_dual_iso_rec, 0);
 static CONFIG_INT("kill.fp.dualiso.rec", kill_fp_dual_iso_rec, 0);
 
 static int dual_iso_currently_enabled()
 {
-    if (dual_iso_is_active())
-        return 1;
-    if (dual_iso_is_enabled())
-        return 1;
-    return 0;
-}
-
-static int dual_iso_kill_context()
-{
-    /* Hide overlays while Dual ISO is on and we are recording, OR when
-     * Dual ISO is actively applied (enabled_lv during RAW rec). */
-    if (!dual_iso_currently_enabled())
-        return 0;
-    if (RECORDING)
-        return 1;
-    if (dual_iso_is_active())
-        return 1;
-    return 0;
+    return dual_iso_is_enabled() ? 1 : 0;
 }
 
 static int zebra_killed_by_dual_iso_rec()
 {
-    return kill_zebra_dual_iso_rec && dual_iso_kill_context();
+    return kill_zebra_dual_iso_rec && RECORDING && dual_iso_is_enabled();
 }
 
 int focus_peaking_killed_by_dual_iso_rec()
 {
-    return kill_fp_dual_iso_rec && dual_iso_kill_context();
+    return kill_fp_dual_iso_rec && RECORDING && dual_iso_is_enabled();
 }
 
 static CONFIG_INT( "focus.peaking", focus_peaking, 0);
@@ -2189,24 +2174,6 @@ draw_zebra_and_focus( int Z, int F )
     if (unlikely(!bvram)) return 0;
     if (unlikely(!bvram_mirror)) return 0;
 
-    /* When kill FP/zebras engages, clear leftover software peaking dots so
-     * they do not freeze on screen while Digic Edge Image takes over. */
-    {
-        static int prev_fp_kill = 0;
-        static int prev_zb_kill = 0;
-        int fk = focus_peaking_killed_by_dual_iso_rec() ? 1 : 0;
-        int zk = zebra_killed_by_dual_iso_rec() ? 1 : 0;
-        if ((fk && !prev_fp_kill) || (zk && !prev_zb_kill))
-        {
-#ifdef FEATURE_FOCUS_PEAK
-            dirty_pixels_num = 0;
-#endif
-            bvram_mirror_clear();
-        }
-        prev_fp_kill = fk;
-        prev_zb_kill = zk;
-    }
-    
     #ifdef FEATURE_ZEBRA
     draw_zebras(Z);
     #endif
@@ -3440,17 +3407,15 @@ struct menu_entry zebra_menus[] = {
     {
         .name = "Magic Zoom",
         .priv = &zoom_overlay_enabled,
-        .select = menu_open_submenu,
+        .select = zoom_overlay_select,
         .update = zoom_overlay_display,
         .min = 0,
         .max = 1,
         .icon_type = IT_BOOL,
         .choices = CHOICES("OFF", "ON"),
         .edit_mode = EM_INLINE_ADJUST,
-        .help = "Zoom box for checking focus. SET opens options. Dial toggles ON/OFF.",
-        .help2 = "Can be used while recording. Prefer Always On or Half-shutter on EOS M.",
-        .depends_on = DEP_GLOBAL_DRAW,
-        .works_best_in = DEP_LIVEVIEW,
+        .help = "Zoom box for focus. Dial ON/OFF. SET opens size/position options.",
+        .help2 = "Turn ON with the dial first, then press SET for Trigger/Size/Position.",
         .submenu_width = 650,
         .children =  (struct menu_entry[]) {
             {
@@ -3460,7 +3425,7 @@ struct menu_entry zebra_menus[] = {
 #ifdef CONFIG_ZOOM_BTN_NOT_WORKING_WHILE_RECORDING
                 .max = 4,
                 .choices = (const char *[]) {"HalfShutter", "Focus+HS", "ZoomIn (+)", "Always On"},
-                .help = "Trigger Magic Zoom by half-shutter, focus ring, zoom, or always on.",
+                .help = "How Magic Zoom is shown. Always On is most reliable on EOS M.",
 #else
                 .max = 4,
                 .choices = (const char *[]) {"Zoom.REC", "Focus+ZREC", "ZoomIn (+)", "Always On"},
