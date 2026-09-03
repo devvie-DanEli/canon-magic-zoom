@@ -314,12 +314,10 @@ int nondigic_zoom_overlay_enabled()
         should_draw_zoom_overlay();
 }
 
-/* used to detect whether Dual ISO is currently enabled, without
- * hard-linking against the dual_iso module (it may not be loaded).
- * MODULE_FUNCTION requires the pointer variable name to match the
- * symbol name so the module loader can fill it in. */
-static int (*dual_iso_is_enabled)() = MODULE_FUNCTION(dual_iso_is_enabled);
-static int (*dual_iso_is_active)() = MODULE_FUNCTION(dual_iso_is_active);
+/* Dual ISO status comes from modules/dual_iso/dual_iso.h (WEAK_FUNC).
+ * When the module is not loaded those stubs return 0. Do not redeclare
+ * dual_iso_is_enabled / dual_iso_is_active as MODULE_FUNCTION pointers —
+ * that conflicts with the header. */
 
 /* "KILL FP/Zebras (Dual ISO Rec)": while Dual ISO is active (menu on
  * and/or actively applied while recording), temporarily hide software
@@ -330,9 +328,9 @@ static CONFIG_INT("kill.fp.dualiso.rec", kill_fp_dual_iso_rec, 0);
 
 static int dual_iso_currently_enabled()
 {
-    if (dual_iso_is_active && dual_iso_is_active())
+    if (dual_iso_is_active())
         return 1;
-    if (dual_iso_is_enabled && dual_iso_is_enabled())
+    if (dual_iso_is_enabled())
         return 1;
     return 0;
 }
@@ -345,7 +343,7 @@ static int dual_iso_kill_context()
         return 0;
     if (RECORDING)
         return 1;
-    if (dual_iso_is_active && dual_iso_is_active())
+    if (dual_iso_is_active())
         return 1;
     return 0;
 }
@@ -2431,9 +2429,7 @@ static MENU_UPDATE_FUNC(kill_zebra_dualiso_rec_display)
     MENU_SET_VALUE("%s", CURRENT_VALUE ? "ON" : "OFF");
     if (CURRENT_VALUE)
     {
-        if (!dual_iso_is_enabled)
-            MENU_SET_WARNING(MENU_WARN_ADVICE, "Dual ISO module is not loaded.");
-        else if (!dual_iso_currently_enabled())
+        if (!dual_iso_currently_enabled())
             MENU_SET_WARNING(MENU_WARN_INFO, "No effect: Dual ISO is currently off.");
         else if (RECORDING)
             MENU_SET_WARNING(MENU_WARN_INFO, "Zebras hidden now (recording with Dual ISO).");
@@ -2447,9 +2443,7 @@ static MENU_UPDATE_FUNC(kill_fp_dualiso_rec_display)
     MENU_SET_VALUE("%s", CURRENT_VALUE ? "ON" : "OFF");
     if (CURRENT_VALUE)
     {
-        if (!dual_iso_is_enabled)
-            MENU_SET_WARNING(MENU_WARN_ADVICE, "Dual ISO module is not loaded.");
-        else if (!dual_iso_currently_enabled())
+        if (!dual_iso_currently_enabled())
             MENU_SET_WARNING(MENU_WARN_INFO, "No effect: Dual ISO is currently off.");
         else if (RECORDING)
             MENU_SET_WARNING(MENU_WARN_INFO, "Focus peak hidden now (recording with Dual ISO).");
