@@ -330,7 +330,7 @@ static int zebra_killed_by_dual_iso_rec()
     return kill_zebra_dual_iso_rec && RECORDING && dual_iso_currently_enabled();
 }
 
-static int focus_peaking_killed_by_dual_iso_rec()
+int focus_peaking_killed_by_dual_iso_rec()
 {
     return kill_fp_dual_iso_rec && RECORDING && dual_iso_currently_enabled();
 }
@@ -3403,6 +3403,7 @@ struct menu_entry zebra_menus[] = {
     {
         .name = "Magic Zoom",
         .priv = &zoom_overlay_enabled,
+        .select = menu_open_submenu,
         .update = zoom_overlay_display,
         .min = 0,
         .max = 1,

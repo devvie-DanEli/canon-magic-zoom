@@ -2429,11 +2429,16 @@ static void preview_contrast_n_saturation_step()
      * When "Auto Edge (Dual ISO)" is on and Dual ISO is actively shooting,
      * temporarily force Edge Image for the live render only -- the saved
      * menu value (preview_peaking) is never touched, so this reverts on
-     * its own the moment Dual ISO turns off. */
+     * its own the moment Dual ISO turns off.
+     * Skipped while "Kill FP (Dual ISO Rec)" is actively suppressing
+     * peaking during recording -- that switch should win, not get
+     * overridden back on every frame by Auto Edge. */
+    extern int focus_peaking_killed_by_dual_iso_rec(); /* zebra.c */
     int digic_peak_effective = preview_peaking;
     if (digic_peak_auto_edge_on_dualiso &&
         dual_iso_is_active && dual_iso_is_active() &&
-        !preview_peaking_force_normal_image)
+        !preview_peaking_force_normal_image &&
+        !focus_peaking_killed_by_dual_iso_rec())
     {
         digic_peak_effective = 2;
     }
