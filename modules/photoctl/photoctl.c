@@ -2,7 +2,6 @@
 #include <module.h>
 #include <config.h>
 #include <menu.h>
-#include <bmp.h>
 #include <property.h>
 #include <lvinfo.h>
 #include <lens.h>
@@ -11,10 +10,10 @@
 #ifdef CONFIG_EOSM
 
 /*
- * Photo-mode controls are deliberately kept out of gui-common.c.
- * handle_common_events_by_feature() calls handle_module_keys() before the
- * event reaches Canon, so this module can consume only the Photo-mode touch
- * events while leaving the existing Movie-mode touch router unchanged.
+ * EOS M photo touch controls live here rather than in gui-common.c.
+ * gui-common handles the existing Movie-mode touch gestures first; when it
+ * leaves a Photo-mode touch unhandled, handle_module_keys() runs before the
+ * event reaches Canon, which lets this module own only the Photo controls.
  */
 
 static uint32_t photoctl_touch_word(void *obj, int index)
@@ -46,7 +45,13 @@ static int photoctl_touch_get_xy(struct event *event, int *x, int *y)
 
 static int photoctl_context_ok(void)
 {
-    return lv && !is_movie_mode() && !RECORDING && !gui_menu_shown() && lv_dispsize != 10;
+    return lv && !is_movie_mode() && !RECORDING &&
+           !gui_menu_shown() && lv_dispsize != 10;
+}
+
+static int photoctl_settings_ok(void)
+{
+    return lv && !is_movie_mode() && !RECORDING && lv_dispsize != 10;
 }
 
 static int (*dual_iso_is_enabled)() = MODULE_FUNCTION(dual_iso_is_enabled);
@@ -56,7 +61,7 @@ static int (*dual_iso_slim_step_recovery)(int) =
 static void photoctl_refresh_wb_editor(void)
 {
     char value[32];
-    int awb = (lens_info.wb_mode == WB_AUTO);
+    int awb = lens_info.wb_mode == WB_AUTO;
 
     if (awb)
         snprintf(value, sizeof(value), "AWB");
@@ -127,7 +132,7 @@ static void photoctl_change_field(enum lvinfo_touch_field field, int slot, int s
     lens_display_set_dirty();
 }
 
-static int photoctl_handle_touch(unsigned int ctx)
+static unsigned int photoctl_handle_touch(unsigned int ctx)
 {
     struct event *event = (struct event *)ctx;
     int x, y;
@@ -160,11 +165,8 @@ static int photoctl_handle_touch(unsigned int ctx)
 
             {
                 enum lvinfo_touch_field field = lvinfo_touch_field_at(x, y);
-                if (field == LVINFO_TOUCH_NONE)
-                    return 1;
 
-                /* Photo mode deliberately exposes only exposure/WB controls.
-                 * Crop/FPS/bit-depth/video-memory fields remain movie-only. */
+                /* Photo mode only gets ISO / shutter / aperture / WB. */
                 if (field != LVINFO_TOUCH_APERTURE &&
                     field != LVINFO_TOUCH_SHUTTER &&
                     field != LVINFO_TOUCH_ISO &&
@@ -198,7 +200,7 @@ static int photoctl_handle_touch(unsigned int ctx)
     }
 }
 
-/* ------------------------- Mode-separated settings -------------------- */
+/* ----------------------- Mode-separated exposure state ---------------- */
 
 struct exposure_profile
 {
@@ -206,8 +208,6 @@ struct exposure_profile
     int iso;
     int shutter;
     int aperture;
-    int wb_mode;
-    int kelvin;
 };
 
 static struct exposure_profile photo_profile;
@@ -221,14 +221,13 @@ static int photoctl_profile_capture(struct exposure_profile *profile)
     if (!profile || !lens_info.lens_exists)
         return 0;
 
+    /* Ignore a completely uninitialized property packet. */
     if (!lens_info.raw_iso && !lens_info.raw_iso_auto)
         return 0;
 
     profile->iso = lens_info.raw_iso;
     profile->shutter = lens_info.raw_shutter;
     profile->aperture = lens_info.raw_aperture;
-    profile->wb_mode = lens_info.wb_mode;
-    profile->kelvin = lens_info.kelvin;
     profile->valid = 1;
     return 1;
 }
@@ -244,7 +243,7 @@ static void photoctl_profile_apply_task(int timer, void *opaque)
     if (!restore_pending)
         return;
 
-    movie = is_movie_mode();
+    movie = is_movie_mode() ? 1 : 0;
     if (movie != restore_mode)
     {
         delayed_call(100, photoctl_profile_apply_task, 0);
@@ -265,22 +264,12 @@ static void photoctl_profile_apply_task(int timer, void *opaque)
         return;
     }
 
-    if (profile->iso || profile->shutter || profile->aperture)
-    {
-        if (profile->iso)
-            lens_set_rawiso(profile->iso);
-        if (profile->shutter)
-            lens_set_rawshutter(profile->shutter);
-        if (profile->aperture && lens_info.lens_exists)
-            lens_set_rawaperture(profile->aperture);
-
-        if (profile->wb_mode == WB_AUTO)
-            lens_set_wb_mode(WB_AUTO);
-        else if (profile->wb_mode == WB_KELVIN)
-            lens_set_kelvin(profile->kelvin ? profile->kelvin : 5500);
-        else
-            lens_set_wb_mode(profile->wb_mode);
-    }
+    if (profile->iso)
+        lens_set_rawiso(profile->iso);
+    if (profile->shutter)
+        lens_set_rawshutter(profile->shutter);
+    if (profile->aperture && lens_info.lens_exists)
+        lens_set_rawaperture(profile->aperture);
 
     restore_pending = 0;
     lens_display_set_dirty();
@@ -308,14 +297,9 @@ static unsigned int photoctl_profile_cbr(unsigned int ctx)
 
     if (movie != active_mode)
     {
-        /* Freeze the profile of the mode being left before Canon's new mode
-         * has had time to replace the exposure properties. */
-        if (!restore_pending)
-        {
-            struct exposure_profile *old = active_mode ? &video_profile : &photo_profile;
-            photoctl_profile_capture(old);
-        }
-
+        /* Do not capture the old profile here.  Canon may already have
+         * replaced lens_info with the new mode's values. The old profile was
+         * updated continuously on the preceding frames. */
         active_mode = movie;
 
         if (current->valid)
@@ -328,6 +312,10 @@ static unsigned int photoctl_profile_cbr(unsigned int ctx)
         {
             photoctl_profile_capture(current);
         }
+
+        /* Don't leave the touch editor from the old mode on screen. */
+        if (lvinfo_touch_editor_is_open())
+            lvinfo_touch_editor_close();
 
         return 0;
     }
@@ -344,36 +332,37 @@ static CONFIG_INT("photoctl.p1.valid", p1_valid, 0);
 static CONFIG_INT("photoctl.p1.iso", p1_iso, 0);
 static CONFIG_INT("photoctl.p1.shutter", p1_shutter, 0);
 static CONFIG_INT("photoctl.p1.aperture", p1_aperture, 0);
-static CONFIG_INT("photoctl.p1.wb_mode", p1_wb_mode, WB_AUTO);
-static CONFIG_INT("photoctl.p1.kelvin", p1_kelvin, 5500);
 
 static CONFIG_INT("photoctl.p2.valid", p2_valid, 0);
 static CONFIG_INT("photoctl.p2.iso", p2_iso, 0);
 static CONFIG_INT("photoctl.p2.shutter", p2_shutter, 0);
 static CONFIG_INT("photoctl.p2.aperture", p2_aperture, 0);
-static CONFIG_INT("photoctl.p2.wb_mode", p2_wb_mode, WB_AUTO);
-static CONFIG_INT("photoctl.p2.kelvin", p2_kelvin, 5500);
 
 static CONFIG_INT("photoctl.p3.valid", p3_valid, 0);
 static CONFIG_INT("photoctl.p3.iso", p3_iso, 0);
 static CONFIG_INT("photoctl.p3.shutter", p3_shutter, 0);
 static CONFIG_INT("photoctl.p3.aperture", p3_aperture, 0);
-static CONFIG_INT("photoctl.p3.wb_mode", p3_wb_mode, WB_AUTO);
-static CONFIG_INT("photoctl.p3.kelvin", p3_kelvin, 5500);
 
 static void photoctl_save_slot(int slot)
 {
     struct exposure_profile p;
-    if (!photoctl_context_ok())
+
+    if (!photoctl_settings_ok())
         return;
     if (!photoctl_profile_capture(&p))
         return;
 
     switch (slot)
     {
-        case 0: p1_valid=1; p1_iso=p.iso; p1_shutter=p.shutter; p1_aperture=p.aperture; p1_wb_mode=p.wb_mode; p1_kelvin=p.kelvin; break;
-        case 1: p2_valid=1; p2_iso=p.iso; p2_shutter=p.shutter; p2_aperture=p.aperture; p2_wb_mode=p.wb_mode; p2_kelvin=p.kelvin; break;
-        default:p3_valid=1; p3_iso=p.iso; p3_shutter=p.shutter; p3_aperture=p.aperture; p3_wb_mode=p.wb_mode; p3_kelvin=p.kelvin; break;
+        case 0:
+            p1_valid = 1; p1_iso = p.iso; p1_shutter = p.shutter; p1_aperture = p.aperture;
+            break;
+        case 1:
+            p2_valid = 1; p2_iso = p.iso; p2_shutter = p.shutter; p2_aperture = p.aperture;
+            break;
+        default:
+            p3_valid = 1; p3_iso = p.iso; p3_shutter = p.shutter; p3_aperture = p.aperture;
+            break;
     }
 
     NotifyBox(1200, "Saved P%d", slot + 1);
@@ -381,16 +370,22 @@ static void photoctl_save_slot(int slot)
 
 static void photoctl_load_slot(int slot)
 {
-    int valid, iso, shutter, aperture, wb_mode, kelvin;
+    int valid, iso, shutter, aperture;
 
-    if (!photoctl_context_ok())
+    if (!photoctl_settings_ok())
         return;
 
     switch (slot)
     {
-        case 0: valid=p1_valid; iso=p1_iso; shutter=p1_shutter; aperture=p1_aperture; wb_mode=p1_wb_mode; kelvin=p1_kelvin; break;
-        case 1: valid=p2_valid; iso=p2_iso; shutter=p2_shutter; aperture=p2_aperture; wb_mode=p2_wb_mode; kelvin=p2_kelvin; break;
-        default:valid=p3_valid; iso=p3_iso; shutter=p3_shutter; aperture=p3_aperture; wb_mode=p3_wb_mode; kelvin=p3_kelvin; break;
+        case 0:
+            valid=p1_valid; iso=p1_iso; shutter=p1_shutter; aperture=p1_aperture;
+            break;
+        case 1:
+            valid=p2_valid; iso=p2_iso; shutter=p2_shutter; aperture=p2_aperture;
+            break;
+        default:
+            valid=p3_valid; iso=p3_iso; shutter=p3_shutter; aperture=p3_aperture;
+            break;
     }
 
     if (!valid)
@@ -405,13 +400,6 @@ static void photoctl_load_slot(int slot)
         lens_set_rawshutter(shutter);
     if (aperture && lens_info.lens_exists)
         lens_set_rawaperture(aperture);
-
-    if (wb_mode == WB_AUTO)
-        lens_set_wb_mode(WB_AUTO);
-    else if (wb_mode == WB_KELVIN)
-        lens_set_kelvin(kelvin ? kelvin : 5500);
-    else
-        lens_set_wb_mode(wb_mode);
 
     photoctl_profile_capture(&photo_profile);
     lens_display_set_dirty();
@@ -512,20 +500,14 @@ MODULE_CONFIGS_START()
     MODULE_CONFIG(p1_iso)
     MODULE_CONFIG(p1_shutter)
     MODULE_CONFIG(p1_aperture)
-    MODULE_CONFIG(p1_wb_mode)
-    MODULE_CONFIG(p1_kelvin)
     MODULE_CONFIG(p2_valid)
     MODULE_CONFIG(p2_iso)
     MODULE_CONFIG(p2_shutter)
     MODULE_CONFIG(p2_aperture)
-    MODULE_CONFIG(p2_wb_mode)
-    MODULE_CONFIG(p2_kelvin)
     MODULE_CONFIG(p3_valid)
     MODULE_CONFIG(p3_iso)
     MODULE_CONFIG(p3_shutter)
     MODULE_CONFIG(p3_aperture)
-    MODULE_CONFIG(p3_wb_mode)
-    MODULE_CONFIG(p3_kelvin)
 MODULE_CONFIGS_END()
 
 #endif /* CONFIG_EOSM */
