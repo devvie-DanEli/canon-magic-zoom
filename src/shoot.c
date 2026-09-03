@@ -30,6 +30,7 @@
 #include "version.h"
 #include "config.h"
 #include "menu.h"
+#include "menu-grid.h"
 #include "property.h"
 #include "lens.h"
 #include "gui.h"
