@@ -44,11 +44,11 @@ def add_string(name, value):
 
 def declare_string_section():
     print
-    print "#define MODULE_STRINGS() \\\n"
-    print('  MODULE_STRINGS_START() \\\n')
+    print "#define MODULE_STRINGS() \\"
+    print('  MODULE_STRINGS_START() \\')
     for i, s in enumerate(strings):
         a = chr(ord('a') + i)
-        print "    MODULE_STRING(__module_string_%s_name, __module_string_%s_value) \\\n" % (a, a)
+        print "    MODULE_STRING(__module_string_%s_name, __module_string_%s_value) \\" % (a, a)
     print('  MODULE_STRINGS_END()')
     
 def is_command_available(name):
@@ -114,11 +114,9 @@ if "Summary" not in tags:
 rst2htmlCommands = ["rst2html", "rst2html5", "rst2html.py", "rst2html5.py"]
 rst2htmlCommand = get_command_of(rst2htmlCommands)
 
-# html2text.py is Python-2 code. Use the same interpreter that launched
-# this generator, even when rst2html itself comes from Python 3 Docutils.
-html2textCommand = sys.executable + " ../html2text.py"
-
-txt = run('cat README.rst | grep -v -E "^:([^:])+:.+$" | ' + rst2htmlCommand + ' | ' + html2textCommand + ' -b 700 | sed "s/\r$//"')
+# render the RST as html -> txt without the metadata tags
+# sed command at end is because Windows inserts CR characters all over the place. Removing them should be benign on other platforms. 
+txt = run('cat README.rst | grep -v -E "^:([^:])+:.+$" | ' + rst2htmlCommand + ' | python ../html2text.py -b 700 | sed "s/\r$//"')
 
 desc = ""
 last_str = "Description"
