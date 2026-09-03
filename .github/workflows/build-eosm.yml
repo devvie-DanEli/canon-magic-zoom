@@ -40,6 +40,93 @@ jobs:
             sed -i 's/"hdmi_out"};/"hdmi_out", "photoctl"};/' src/module.c
           grep 'core_modules' src/module.c
 
+      - name: Fix EOS M Photo touch routing
+        run: |
+          set -euo pipefail
+          python2 - <<'PY'
+          from __future__ import print_function
+
+          def patch_file(path, replacements):
+              data = open(path, 'r').read()
+              for old, new, label in replacements:
+                  if old not in data:
+                      raise SystemExit('Photo touch patch: missing ' + label)
+                  data = data.replace(old, new, 1)
+              open(path, 'w').write(data)
+
+          # Photo-mode touch must reach photoctl before the core Live View
+          # gesture router. Video mode keeps the original ordering unchanged.
+          patch_file('src/gui-common.c', [
+              (
+                  '    #ifdef CONFIG_SLIM_MENUS\n'
+                  '    if (!menu_white_card_wb_handle_key(event->param, IS_FAKE(event))) return 0;\n',
+                  '    #ifdef CONFIG_EOSM\n'
+                  '    if ((event->param == BGMT_TOUCH_1_FINGER ||\n'
+                  '         event->param == BGMT_UNTOUCH_1_FINGER ||\n'
+                  '         event->param == BGMT_TOUCH_2_FINGER ||\n'
+                  '         event->param == BGMT_UNTOUCH_2_FINGER) &&\n'
+                  '        !is_movie_mode())\n'
+                  '    {\n'
+                  '        if (handle_module_keys(event) == 0) return 0;\n'
+                  '    }\n'
+                  '    #endif\n\n'
+                  '    #ifdef CONFIG_SLIM_MENUS\n'
+                  '    if (!menu_white_card_wb_handle_key(event->param, IS_FAKE(event))) return 0;\n',
+                  'photo module dispatch insertion'
+              )
+          ])
+
+          # photoctl owns the Photo touchscreen. Unassigned Photo touches are
+          # intentionally consumed so Canon cannot turn them into its Settings grid.
+          patch_file('modules/photoctl/photoctl.c', [
+              (
+                  '            if (!photoctl_touch_get_xy(event, &x, &y))\n'
+                  '                return 1;\n',
+                  '            if (!photoctl_touch_get_xy(event, &x, &y))\n'
+                  '                return 0;\n',
+                  'touch coordinate fallback'
+              ),
+              (
+                  '                if (field != LVINFO_TOUCH_APERTURE &&\n'
+                  '                    field != LVINFO_TOUCH_SHUTTER &&\n'
+                  '                    field != LVINFO_TOUCH_ISO &&\n'
+                  '                    field != LVINFO_TOUCH_WB)\n'
+                  '                    return 1;\n',
+                  '                if (field != LVINFO_TOUCH_APERTURE &&\n'
+                  '                    field != LVINFO_TOUCH_SHUTTER &&\n'
+                  '                    field != LVINFO_TOUCH_ISO &&\n'
+                  '                    field != LVINFO_TOUCH_WB)\n'
+                  '                    return 0;\n',
+                  'Photo-only field consumption'
+              ),
+              (
+                  '        case BGMT_UNTOUCH_1_FINGER:\n'
+                  '            if (lvinfo_touch_editor_is_open())\n'
+                  '                return 0;\n'
+                  '            return 1;\n',
+                  '        case BGMT_UNTOUCH_1_FINGER:\n'
+                  '            if (lvinfo_touch_editor_is_open())\n'
+                  '                return 0;\n'
+                  '            return 0;\n',
+                  'Photo touch release consumption'
+              ),
+              (
+                  '        case BGMT_TOUCH_2_FINGER:\n'
+                  '        case BGMT_UNTOUCH_2_FINGER:\n'
+                  '            if (lvinfo_touch_editor_is_open())\n'
+                  '                return 0;\n'
+                  '            return 1;\n',
+                  '        case BGMT_TOUCH_2_FINGER:\n'
+                  '        case BGMT_UNTOUCH_2_FINGER:\n'
+                  '            if (lvinfo_touch_editor_is_open())\n'
+                  '                return 0;\n'
+                  '            return 0;\n',
+                  'Photo two-finger consumption'
+              )
+          ])
+          print('EOS M Photo touch routing patched')
+          PY
+
       - name: Cache ARM toolchain
         id: cache-toolchain
         uses: actions/cache@v4
