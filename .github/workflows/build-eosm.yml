@@ -15,10 +15,10 @@ jobs:
       - name: Check out the repo
         uses: actions/checkout@v4
 
-      - name: Install Python 2 (Required for ML build scripts)
+      - name: Install Python 2 + docutils (Required for ML build scripts and module README strings)
         run: |
           sudo apt-get update
-          sudo apt-get install -y python2
+          sudo apt-get install -y python2 python-docutils
 
       - name: Generate placeholder module info (avoids needing Python 2)
         run: |
