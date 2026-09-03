@@ -206,8 +206,8 @@ static CONFIG_INT( "zebra.raw.under", zebra_raw_underexposure,  1 );
 #define MZ_ALWAYS_ON            4
 static CONFIG_INT( "zoom.overlay", zoom_overlay_enabled, 0);
 #ifdef CONFIG_EOSM
-/* EOS M: default half-shutter trigger. Always On is in the submenu. */
-static CONFIG_INT( "zoom.overlay.trig", zoom_overlay_trigger_mode, 1);
+/* EOS M / Crop Mood: Always On so Magic Zoom works without zoom button. */
+static CONFIG_INT( "zoom.overlay.trig", zoom_overlay_trigger_mode, MZ_ALWAYS_ON);
 #else
 static CONFIG_INT( "zoom.overlay.trig", zoom_overlay_trigger_mode, MZ_TAKEOVER_ZOOM_IN_BTN);
 #endif
@@ -281,7 +281,12 @@ int should_draw_zoom_overlay()
 #ifdef FEATURE_MAGIC_ZOOM
     if (!lv) return 0;
     if (!zoom_overlay_enabled) return 0;
-    if (!zebra_should_run()) return 0;
+    /* Do not require zebra_should_run(): Crop Mood sets kill_canon_gui_mode,
+     * which makes zebra_should_run() false and would disable Magic Zoom
+     * entirely on Amit slim builds. Global Draw + LV is enough. */
+    if (!get_global_draw()) return 0;
+    if (!DISPLAY_IS_ON) return 0;
+    if (gui_menu_shown()) return 0;
     if (EXT_MONITOR_RCA) return 0;
     if (hdmi_code >= 5) return 0;
     #if defined(CONFIG_DISPLAY_FILTERS) && defined(CONFIG_CAN_REDIRECT_DISPLAY_BUFFER) && !defined(CONFIG_CAN_REDIRECT_DISPLAY_BUFFER_EASILY)
@@ -333,14 +338,29 @@ static int dual_iso_currently_enabled()
     return dual_iso_is_enabled() ? 1 : 0;
 }
 
+/* Auto Edge (tweaks.c) also hides software overlays so Edge Image is clean. */
+extern int digic_auto_edge_should_hide_software_overlays(void);
+
 static int zebra_killed_by_dual_iso_rec()
 {
-    return kill_zebra_dual_iso_rec && RECORDING && dual_iso_is_enabled();
+    if (!(RECORDING && dual_iso_is_enabled()))
+        return 0;
+    if (kill_zebra_dual_iso_rec)
+        return 1;
+    if (digic_auto_edge_should_hide_software_overlays())
+        return 1;
+    return 0;
 }
 
 int focus_peaking_killed_by_dual_iso_rec()
 {
-    return kill_fp_dual_iso_rec && RECORDING && dual_iso_is_enabled();
+    if (!(RECORDING && dual_iso_is_enabled()))
+        return 0;
+    if (kill_fp_dual_iso_rec)
+        return 1;
+    if (digic_auto_edge_should_hide_software_overlays())
+        return 1;
+    return 0;
 }
 
 static CONFIG_INT( "focus.peaking", focus_peaking, 0);
@@ -2197,6 +2217,23 @@ draw_zebra_and_focus( int Z, int F )
     static int prev_thr = 50;
     static int thr_delta = 0;
 
+    /* Erase leftover software peaking dots when KILL FP engages, otherwise
+     * they freeze on screen because the draw path stops updating them. */
+    if (F && focus_peaking && focus_peaking_killed_by_dual_iso_rec() && dirty_pixels_num)
+    {
+        if (dirty_pixels && dirty_pixel_values)
+        {
+            for (int i = 0; i < dirty_pixels_num; i++)
+            {
+                uint16_t *b1 = (uint16_t *)(bvram + dirty_pixels[i]);
+                uint16_t *b2 = (uint16_t *)(bvram + dirty_pixels[i] + BMPPITCH);
+                *b1 = dirty_pixel_values[i] & 0xFFFF;
+                *b2 = dirty_pixel_values[i] >> 16;
+            }
+        }
+        dirty_pixels_num = 0;
+    }
+
     if (F && focus_peaking && !focus_peaking_killed_by_dual_iso_rec())
     {
         // clear previously written pixels
@@ -3311,8 +3348,8 @@ struct menu_entry zebra_menus[] = {
         .update     = kill_fp_dualiso_rec_display,
         .edit_mode = EM_INLINE_ADJUST,
         .help = "Hide software focus peaking (red dots) while Dual ISO is active/recording.",
-        .help2 = "Works with Auto Edge: hides dots so Digic Edge Image is clean.\n"
-                 "Also forces Digic peaking off via the same kill signal. Independent from KILL Zebras.",
+        .help2 = "Use with Auto Edge: hides red dots so Digic Edge Image is visible.\n"
+                 "Does not turn off Digic Edge Image. Independent from KILL Zebras.",
     },
     #endif
 
