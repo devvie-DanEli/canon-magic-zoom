@@ -1652,19 +1652,29 @@ static int zebra_digic_dirty = 0;
 static void draw_zebras( int Z )
 {
     uint8_t * const bvram = bmp_vram_real();
-    /* KILL Zebras / Auto Edge: never draw, and clear DIGIC zebra state so
-     * stripes do not remain stuck from the previous frame. */
-    if (zebra_killed_by_dual_iso_rec())
+    /* KILL Zebras / Auto Edge: do not draw. On rising edge, wipe leftover
+     * zebra pixels so they do not stick in LiveView during Dual ISO rec. */
     {
-#ifdef FEATURE_ZEBRA_FAST
-        /* Clear DIGIC zebra hardware path so stripes do not stick. */
-        if (zebra_digic_dirty)
+        static int prev_zb_kill = 0;
+        int zk = zebra_killed_by_dual_iso_rec() ? 1 : 0;
+        if (zk)
         {
-            EngDrvOut(DIGIC_ZEBRA_REGISTER, 0);
-            zebra_digic_dirty = 0;
-        }
+#ifdef FEATURE_ZEBRA_FAST
+            if (zebra_digic_dirty)
+            {
+                EngDrvOut(DIGIC_ZEBRA_REGISTER, 0);
+                zebra_digic_dirty = 0;
+            }
 #endif
-        return;
+            if (!prev_zb_kill && bvram_mirror_start)
+            {
+                /* One-shot mirror clear removes frozen BMP zebra stripes. */
+                bvram_mirror_clear();
+            }
+            prev_zb_kill = 1;
+            return;
+        }
+        prev_zb_kill = 0;
     }
     int zd = Z && monitoring_enabled(zebra_draw) && (lv_luma_is_accurate() || PLAY_OR_QR_MODE) && (zebra_rec || NOT_RECORDING); // when to draw zebras
     if (zd)
@@ -3337,8 +3347,8 @@ struct menu_entry zebra_menus[] = {
         .update     = kill_fp_dualiso_rec_display,
         .edit_mode = EM_INLINE_ADJUST,
         .help = "Hide software focus peaking (red dots) while Dual ISO is active/recording.",
-        .help2 = "Use with Auto Edge: hides red dots so Digic Edge Image is visible.\n"
-                 "Does not turn off Digic Edge Image. Independent from KILL Zebras.",
+        .help2 = "Software red dots only. Digic Edge Image / Auto Edge stay on.\n"
+                 "Independent from KILL Zebras.",
     },
     #endif
 

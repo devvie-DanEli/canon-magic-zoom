@@ -2432,12 +2432,10 @@ static void preview_contrast_n_saturation_step()
         get_ms_clock() < peaking_hs_last_press + 500;     /* and keep it at least 500ms (avoids flicker with fast toggling) */
 
     /* Effective Digic Peaking for this frame.
-     * Auto Edge (Dual ISO): while recording with Dual ISO ON, force Edge
-     * Image (2). That is the intended Dual ISO focus assist — do NOT let
-     * "KILL FP" zero Digic peaking (KILL FP only hides software red dots).
-     * dual_iso_is_enabled() is a WEAK symbol from the dual_iso module. */
+     * Auto Edge / manual Edge Image use DIGIC filters. KILL FP must NEVER
+     * clear digic_peak_effective — it only hides software red peaking dots
+     * (see focus_peaking_killed_by_dual_iso_rec in zebra.c). */
     extern int dual_iso_is_enabled(void);
-    extern int focus_peaking_killed_by_dual_iso_rec(void); /* zebra.c — software FP only */
 
     int digic_peak_effective = preview_peaking;
     int auto_edge_now =
@@ -2448,20 +2446,15 @@ static void preview_contrast_n_saturation_step()
 
     if (auto_edge_now)
     {
-        digic_peak_effective = 2; /* Edge Image */
-    }
-    else if (focus_peaking_killed_by_dual_iso_rec())
-    {
-        /* Only suppress Digic when Auto Edge is not driving Edge Image. */
-        digic_peak_effective = 0;
+        digic_peak_effective = 2; /* Edge Image while Dual ISO recording */
     }
     else if (dual_iso_is_active && dual_iso_is_active() &&
              digic_peak_auto_edge_on_dualiso &&
              !preview_peaking_force_normal_image)
     {
-        /* Fallback if RECORDING flag lags behind dual_iso active state. */
         digic_peak_effective = 2;
     }
+    /* deliberately no branch that sets digic_peak_effective = 0 for KILL FP */
 #endif
     
 #ifdef FEATURE_LV_SATURATION
