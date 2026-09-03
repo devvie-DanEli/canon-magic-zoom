@@ -4,7 +4,6 @@
 #include "font.h"
 #include "menu.h"
 #include "menu-grid.h"
-#include "slim-font.h"
 #include "gui-common.h"
 #include "config.h"
 #include "lens.h"
