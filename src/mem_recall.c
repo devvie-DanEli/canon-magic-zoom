@@ -74,6 +74,12 @@ static int mem_panel_open;
 static int mem_ui_slot;
 static int mem_ui_confirm;
 
+static int mem_loaded_slot = -1;
+static int mem_loaded_iso, mem_loaded_shutter, mem_loaded_aperture;
+static int mem_loaded_wb_mode, mem_loaded_kelvin;
+static int mem_loaded_crop_mode, mem_loaded_ar, mem_loaded_res;
+static int mem_loaded_fps, mem_loaded_bit;
+
 struct mem_fields {
     int *valid, *iso, *shutter, *aperture, *wb_mode, *kelvin;
     int *crop_mode, *ar, *res, *fps, *bit;
@@ -170,6 +176,8 @@ int mem_recall_save(int slot)
 
     *f.valid = 1;
     mem_last_slot = slot;
+    mem_loaded_slot = slot;
+    mem_snapshot_from_slot(slot);
     NotifyBox(1500, "Saved %s", mem_recall_slot_label(slot));
     return 1;
 }
@@ -208,6 +216,8 @@ int mem_recall_load(int slot)
         crop_rec_memory_apply(*f.crop_mode, *f.ar, *f.res, *f.fps, *f.bit);
 
     mem_last_slot = slot;
+    mem_loaded_slot = slot;
+    mem_snapshot_from_slot(slot);
     NotifyBox(1500, "Loaded %s", mem_recall_slot_label(slot));
     lens_display_set_dirty();
     return 1;
@@ -240,25 +250,16 @@ int mem_recall_panel_is_open(void)
     return mem_panel_open;
 }
 
-/* Filled left-pointing chevron (orange). */
-static void mem_draw_chev_left(int tip_x, int cy)
+/* Filled chevron: tip_x is the tip. dir < 0 = ◀, dir > 0 = ▶
+ * Height grows away from the tip so the point faces the correct way. */
+static void mem_draw_chev(int tip_x, int cy, int dir)
 {
     for (int i = 0; i < MEM_CHEV_W; i++)
     {
-        int half = (MEM_CHEV_H / 2) * (MEM_CHEV_W - i) / MEM_CHEV_W;
+        int half = (MEM_CHEV_H / 2) * (i + 1) / MEM_CHEV_W;
         if (half < 1) half = 1;
-        bmp_fill(COLOR_ORANGE, tip_x + i, cy - half, 2, half * 2);
-    }
-}
-
-/* Filled right-pointing chevron (orange). */
-static void mem_draw_chev_right(int tip_x, int cy)
-{
-    for (int i = 0; i < MEM_CHEV_W; i++)
-    {
-        int half = (MEM_CHEV_H / 2) * (MEM_CHEV_W - i) / MEM_CHEV_W;
-        if (half < 1) half = 1;
-        bmp_fill(COLOR_ORANGE, tip_x - i - 2, cy - half, 2, half * 2);
+        int x = (dir < 0) ? (tip_x + i) : (tip_x - i - 1);
+        bmp_fill(COLOR_ORANGE, x, cy - half, 2, half * 2);
     }
 }
 
@@ -277,7 +278,6 @@ void mem_recall_panel_draw(void)
 {
     const char *slot_name;
     const char *status;
-    int has;
     int slot_cx = MEM_CX;
     int chev_cy = MEM_SLOT_Y + 16;
 
@@ -295,13 +295,13 @@ void mem_recall_panel_draw(void)
         return;
     }
 
-    has = mem_recall_slot_has_data(mem_ui_slot);
     slot_name = mem_recall_slot_label(mem_ui_slot);
-    status = has ? "saved" : "empty";
+    status = mem_slot_status_text(mem_ui_slot);
 
     /* Left / right orange chevrons around centered slot name. */
-    mem_draw_chev_left(slot_cx - 110, chev_cy);
-    mem_draw_chev_right(slot_cx + 110, chev_cy);
+    /* Left control shows ◀, right shows ▶ (geometry corrected). */
+    mem_draw_chev(slot_cx - 100, chev_cy, -1);
+    mem_draw_chev(slot_cx + 100, chev_cy, +1);
 
     /* Slot label — white, large, centered (M1 ~ 2 chars). */
     bmp_printf(FONT(FONT_LARGE, COLOR_WHITE, COLOR_BLACK),

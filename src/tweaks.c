@@ -2363,8 +2363,9 @@ static CONFIG_INT("lv.peak.auto.diso", digic_peak_auto_edge_on_dualiso, 0); // a
 /* True while Auto Edge should own focus assist: hide software dots/zebras. */
 int digic_auto_edge_should_hide_software_overlays(void)
 {
-    extern int dual_iso_is_enabled(void);
-    return digic_peak_auto_edge_on_dualiso && RECORDING && dual_iso_is_enabled();
+    /* Auto Edge only enables Digic Edge Image on Dual ISO recording.
+     * It must never hide software focus peaking or zebras. */
+    return 0;
 }
 
 /* Resolved lazily from the dual_iso module; NULL (and harmlessly skipped)
@@ -2438,23 +2439,16 @@ static void preview_contrast_n_saturation_step()
     extern int dual_iso_is_enabled(void);
 
     int digic_peak_effective = preview_peaking;
+    /* Auto Edge: Digic Edge Image only while Dual ISO is ON and recording. */
     int auto_edge_now =
         digic_peak_auto_edge_on_dualiso &&
-        RECORDING &&
+        (RECORDING || RECORDING_RAW) &&
         dual_iso_is_enabled() &&
         !preview_peaking_force_normal_image;
 
     if (auto_edge_now)
-    {
         digic_peak_effective = 2; /* Edge Image while Dual ISO recording */
-    }
-    else if (dual_iso_is_active && dual_iso_is_active() &&
-             digic_peak_auto_edge_on_dualiso &&
-             !preview_peaking_force_normal_image)
-    {
-        digic_peak_effective = 2;
-    }
-    /* deliberately no branch that sets digic_peak_effective = 0 for KILL FP */
+    /* KILL FP never clears digic_peak_effective — software dots only. */
 #endif
     
 #ifdef FEATURE_LV_SATURATION

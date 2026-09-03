@@ -355,25 +355,24 @@ static int dual_iso_currently_enabled()
 
 static int zebra_killed_by_dual_iso_rec()
 {
-    /* Strict: recording + Dual ISO ON + (kill option or Auto Edge hide). */
+    /* KILL Zebras only: Dual ISO recording + option ON.
+     * Auto Edge must not hide zebras (it only switches Digic to Edge Image). */
+    if (!kill_zebra_dual_iso_rec)
+        return 0;
     if (!dual_iso_rec_context())
         return 0;
-    if (kill_zebra_dual_iso_rec)
-        return 1;
-    if (digic_auto_edge_should_hide_software_overlays())
-        return 1;
-    return 0;
+    return 1;
 }
 
 int focus_peaking_killed_by_dual_iso_rec()
 {
+    /* KILL FP only: Dual ISO recording + option ON.
+     * Auto Edge must not hide red peaking dots. */
+    if (!kill_fp_dual_iso_rec)
+        return 0;
     if (!dual_iso_rec_context())
         return 0;
-    if (kill_fp_dual_iso_rec)
-        return 1;
-    if (digic_auto_edge_should_hide_software_overlays())
-        return 1;
-    return 0;
+    return 1;
 }
 
 static CONFIG_INT( "focus.peaking", focus_peaking, 0);
