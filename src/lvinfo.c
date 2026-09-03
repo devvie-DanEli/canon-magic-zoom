@@ -6,6 +6,7 @@
 #include <lens.h>
 #include <fps.h>
 #include <module.h>
+#include <mem_recall.h>
 
 #ifdef CONFIG_SLIM_MENUS
 static int (*dual_iso_is_enabled)() = MODULE_FUNCTION(dual_iso_is_enabled);
@@ -59,6 +60,7 @@ static const char * lvinfo_touch_field_name(enum lvinfo_touch_field field)
         case LVINFO_TOUCH_CROP:     return "Crop info";
         case LVINFO_TOUCH_FPS:      return "FPS";
         case LVINFO_TOUCH_BIT_DEPTH:return "Bitdepth info";
+        case LVINFO_TOUCH_MEMORY:   return "Memory";
         default:                    return 0;
     }
 }
@@ -766,6 +768,7 @@ void lvinfo_display(int top, int bottom)
     }
 
     lvinfo_touch_draw_editor();
+    mem_recall_panel_draw();
     
     give_semaphore(lvinfo_sem);
 }
@@ -817,6 +820,7 @@ enum lvinfo_touch_field lvinfo_touch_field_at(int x, int y)
             else if (!strcmp(name, "Crop info")) candidate = LVINFO_TOUCH_CROP;
             else if (!strcmp(name, "FPS")) candidate = LVINFO_TOUCH_FPS;
             else if (!strcmp(name, "Bitdepth info")) candidate = LVINFO_TOUCH_BIT_DEPTH;
+            else if (!strcmp(name, "Mode") && is_movie_mode()) candidate = LVINFO_TOUCH_MEMORY;
 
             /* Expanded targets may overlap; the closest visible field wins. */
             if (candidate != LVINFO_TOUCH_NONE && distance < best_distance)

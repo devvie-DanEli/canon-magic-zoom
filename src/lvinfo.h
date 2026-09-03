@@ -122,6 +122,7 @@ enum lvinfo_touch_field
     LVINFO_TOUCH_CROP,
     LVINFO_TOUCH_FPS,
     LVINFO_TOUCH_BIT_DEPTH,
+    LVINFO_TOUCH_MEMORY,
 };
 
 enum lvinfo_touch_field lvinfo_touch_field_at(int x, int y);

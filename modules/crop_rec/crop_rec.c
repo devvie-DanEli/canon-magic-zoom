@@ -6486,11 +6486,53 @@ int crop_rec_touch_get_value(int control, int slot, char *value, int size,
     return 1;
 }
 
+/* Absolute capture/apply for Memory Recall (video mode). */
+__attribute__((used, noinline))
+int crop_rec_memory_capture(int *mode, int *ar, int *res, int *fps, int *bit)
+{
+    if (!mode || !ar || !res || !fps || !bit)
+        return 0;
+    slim_crop_sync_from_backend();
+    *mode = COERCE(slim_mode_ui, 0, 3);
+    if (*mode == 0)
+        *ar = COERCE(slim_1x1_ar, 0, 4);
+    else
+        *ar = COERCE(crop_preset_ar_menu, 0, 4);
+    *res = COERCE(slim_unified_preset, 0, 2);
+    *fps = COERCE(crop_preset_fps_menu, 0, 2);
+    *bit = COERCE(slim_bit_depth_ui, 0, 2);
+    return 1;
+}
+
+__attribute__((used, noinline))
+int crop_rec_memory_apply(int mode, int ar, int res, int fps, int bit)
+{
+    if (!is_movie_mode() || RECORDING)
+        return 0;
+
+    slim_mode_ui = COERCE(mode, 0, 2); /* no LV Full-Res via memory */
+    if (slim_mode_ui == 0)
+        slim_1x1_ar = COERCE(ar, 0, 4);
+    else
+        crop_preset_ar_menu = COERCE(ar, 0, 4);
+    slim_unified_preset = COERCE(res, 0, 2);
+    crop_preset_fps_menu = COERCE(fps, 0, 2);
+    slim_bit_depth_ui = COERCE(bit, 0, 2);
+
+    slim_crop_apply_mode();
+    slim_crop_apply_bit_depth();
+    slim_crop_clamp_fps();
+    raw_set_dirty();
+    return 1;
+}
+
 /* Force a relocation to both callbacks for linkers that perform section GC. */
 static void *crop_rec_touch_exports[] __attribute__((used)) = {
     (void *)&crop_rec_touch_adjust,
     (void *)&crop_rec_touch_get_value,
     (void *)&crop_rec_lv_transition_busy,
+    (void *)&crop_rec_memory_capture,
+    (void *)&crop_rec_memory_apply,
 };
 
 static struct menu_entry crop_rec_menu_eosm[] =

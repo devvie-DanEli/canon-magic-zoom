@@ -11,6 +11,7 @@
 #include <lens.h>
 #include <config.h>
 #include <lvinfo.h>
+#include <mem_recall.h>
 #include <menu.h>
 #include <menu-grid.h>
 #include <module.h>
@@ -302,6 +303,9 @@ static int slim_touch_lv_direct_editor(struct event * event)
     if (monitoring_graph_touch_toggle(x, y))
         return 1;
 
+    if (mem_recall_panel_is_open())
+        return mem_recall_panel_touch(x, y);
+
     if (lvinfo_touch_editor_is_open())
     {
         enum lvinfo_touch_field field = lvinfo_touch_editor_field();
@@ -325,6 +329,21 @@ static int slim_touch_lv_direct_editor(struct event * event)
         (field == LVINFO_TOUCH_SHUTTER && !lens_info.raw_shutter))
         return 1;
 
+    /* Memory uses its own panel (Save/Load + overwrite), not the arrow editor. */
+    if (field == LVINFO_TOUCH_MEMORY)
+    {
+        if (!mem_recall_is_available())
+            return 1;
+        slim_touch_tap_count = 0;
+        slim_touch_tap_deadline = 0;
+        if (lvinfo_touch_editor_is_open())
+            lvinfo_touch_editor_close();
+        mem_recall_panel_open();
+        return 1;
+    }
+
+        if (mem_recall_panel_is_open())
+        mem_recall_panel_close();
     lvinfo_touch_editor_open(field);
     /* A status-bar touch must cancel any unfinished Live View tap sequence;
      * otherwise its delayed single-tap action could open Quick Panel over the

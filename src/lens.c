@@ -24,6 +24,7 @@
 
 #include "dryos.h"
 #include "lens.h"
+#include <mem_recall.h>
 #include "property.h"
 #include "bmp.h"
 #include "config.h"
@@ -2835,6 +2836,16 @@ static LVINFO_UPDATE_FUNC(free_space_update)
 static LVINFO_UPDATE_FUNC(mode_update)
 {
     LVINFO_BUFFER(8);
+    /* Video mode: show Memory slot (M1/M2/M3) instead of "Mv". */
+    if (is_movie_mode())
+    {
+        int slot = mem_recall_current_slot();
+        if (slot >= 0)
+            snprintf(buffer, sizeof(buffer), "%s", mem_recall_slot_label(slot));
+        else
+            snprintf(buffer, sizeof(buffer), "Mem");
+        return;
+    }
     snprintf(buffer, sizeof(buffer), get_shootmode_name_short(shooting_mode_custom));
 }
 
