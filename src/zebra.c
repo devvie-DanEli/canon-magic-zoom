@@ -328,22 +328,32 @@ int nondigic_zoom_overlay_enabled()
 
 /* Dual ISO status: dual_iso.h WEAK_FUNC (0 if module not loaded). */
 
-/* KILL FP / KILL Zebras: only while RECORDING and Dual ISO is ON.
- * Digic Auto Edge uses focus_peaking_killed_by_dual_iso_rec() from tweaks.c. */
 static CONFIG_INT("kill.zebra.dualiso.rec", kill_zebra_dual_iso_rec, 0);
 static CONFIG_INT("kill.fp.dualiso.rec", kill_fp_dual_iso_rec, 0);
-
-static int dual_iso_currently_enabled()
-{
-    return dual_iso_is_enabled() ? 1 : 0;
-}
 
 /* Auto Edge (tweaks.c) also hides software overlays so Edge Image is clean. */
 extern int digic_auto_edge_should_hide_software_overlays(void);
 
+/* True while Dual ISO is in a recording context (menu on and/or actively applied). */
+static int dual_iso_rec_context(void)
+{
+    if (!RECORDING)
+        return 0;
+    if (dual_iso_is_enabled())
+        return 1;
+    if (dual_iso_is_active())
+        return 1;
+    return 0;
+}
+
+static int dual_iso_currently_enabled()
+{
+    return dual_iso_is_enabled() || dual_iso_is_active();
+}
+
 static int zebra_killed_by_dual_iso_rec()
 {
-    if (!(RECORDING && dual_iso_is_enabled()))
+    if (!dual_iso_rec_context())
         return 0;
     if (kill_zebra_dual_iso_rec)
         return 1;
@@ -354,7 +364,7 @@ static int zebra_killed_by_dual_iso_rec()
 
 int focus_peaking_killed_by_dual_iso_rec()
 {
-    if (!(RECORDING && dual_iso_is_enabled()))
+    if (!dual_iso_rec_context())
         return 0;
     if (kill_fp_dual_iso_rec)
         return 1;
@@ -1642,7 +1652,21 @@ static int zebra_digic_dirty = 0;
 static void draw_zebras( int Z )
 {
     uint8_t * const bvram = bmp_vram_real();
-    int zd = Z && monitoring_enabled(zebra_draw) && (lv_luma_is_accurate() || PLAY_OR_QR_MODE) && (zebra_rec || NOT_RECORDING) && !zebra_killed_by_dual_iso_rec(); // when to draw zebras
+    /* KILL Zebras / Auto Edge: never draw, and clear DIGIC zebra state so
+     * stripes do not remain stuck from the previous frame. */
+    if (zebra_killed_by_dual_iso_rec())
+    {
+#ifdef FEATURE_ZEBRA_FAST
+        /* Clear DIGIC zebra hardware path so stripes do not stick. */
+        if (zebra_digic_dirty)
+        {
+            EngDrvOut(DIGIC_ZEBRA_REGISTER, 0);
+            zebra_digic_dirty = 0;
+        }
+#endif
+        return;
+    }
+    int zd = Z && monitoring_enabled(zebra_draw) && (lv_luma_is_accurate() || PLAY_OR_QR_MODE) && (zebra_rec || NOT_RECORDING); // when to draw zebras
     if (zd)
     {
         #ifdef FEATURE_RAW_ZEBRAS
@@ -2217,9 +2241,9 @@ draw_zebra_and_focus( int Z, int F )
     static int prev_thr = 50;
     static int thr_delta = 0;
 
-    /* Erase leftover software peaking dots when KILL FP engages, otherwise
-     * they freeze on screen because the draw path stops updating them. */
-    if (F && focus_peaking && focus_peaking_killed_by_dual_iso_rec() && dirty_pixels_num)
+    /* Erase leftover software peaking dots whenever kill is active (not only
+     * on F frames), otherwise they stay stuck in LiveView during Dual ISO rec. */
+    if (focus_peaking_killed_by_dual_iso_rec() && dirty_pixels_num)
     {
         if (dirty_pixels && dirty_pixel_values)
         {
@@ -2610,43 +2634,8 @@ static MENU_UPDATE_FUNC(global_draw_display)
 #ifdef FEATURE_MAGIC_ZOOM
 static MENU_UPDATE_FUNC(zoom_overlay_display)
 {
-    if (zoom_overlay_enabled) MENU_SET_VALUE(
-        "%s%s%s%s%s",
-        zoom_overlay_trigger_mode == 0 ? "err" :
-#ifdef CONFIG_ZOOM_BTN_NOT_WORKING_WHILE_RECORDING
-        zoom_overlay_trigger_mode == 1 ? "HalfS, " :
-        zoom_overlay_trigger_mode == 2 ? "Focus, " :
-        zoom_overlay_trigger_mode == 3 ? "F+HS, " : "ALW, ",
-#else
-        zoom_overlay_trigger_mode == 1 ? "Zrec, " :
-        zoom_overlay_trigger_mode == 2 ? "F+Zr, " :
-        zoom_overlay_trigger_mode == 3 ? "(+), " : "ALW, ",
-#endif
-
-        zoom_overlay_trigger_mode == 0 ? "" :
-            zoom_overlay_size == 0 ? "Small, " :
-            zoom_overlay_size == 1 ? "Med, " :
-            zoom_overlay_size == 2 ? "Large, " : "FullScreen",
-
-        zoom_overlay_trigger_mode == 0 || zoom_overlay_size == 3 ? "" :
-            zoom_overlay_pos == 0 ? "AFbox, " :
-            zoom_overlay_pos == 1 ? "TL, " :
-            zoom_overlay_pos == 2 ? "TR, " :
-            zoom_overlay_pos == 3 ? "BR, " :
-            zoom_overlay_pos == 4 ? "BL, " : "err",
-
-        zoom_overlay_trigger_mode == 0 || zoom_overlay_size == 3 ? "" :
-            zoom_overlay_x == 0 ? "1:1" :
-            zoom_overlay_x == 1 ? "2:1" :
-            zoom_overlay_x == 2 ? "3:1" :
-            zoom_overlay_x == 3 ? "4:1" : "err",
-
-        zoom_overlay_trigger_mode == 0 || zoom_overlay_size == 3 ? "" :
-            zoom_overlay_split == 0 ? "" :
-            zoom_overlay_split == 1 ? ", Ss" :
-            zoom_overlay_split == 2 ? ", Sz" : "err"
-
-    );
+    /* Slim UI: parent row is a plain OFF/ON toggle. Details live in the submenu. */
+    MENU_SET_VALUE("%s", zoom_overlay_enabled ? "ON" : "OFF");
 
     if (EXT_MONITOR_RCA)
         MENU_SET_WARNING(MENU_WARN_NOT_WORKING, "Magic Zoom does not work with SD monitors");
@@ -4730,7 +4719,7 @@ livev_hipriority_task( void* unused )
             msleep(100);
         }
 
-        int zd = monitoring_enabled(zebra_draw) && (lv_luma_is_accurate() || PLAY_OR_QR_MODE) && (zebra_rec || NOT_RECORDING) && !zebra_killed_by_dual_iso_rec(); // when to draw zebras (should match the one from draw_zebra_and_focus)
+        int zd = monitoring_enabled(zebra_draw) && (lv_luma_is_accurate() || PLAY_OR_QR_MODE) && (zebra_rec || NOT_RECORDING) && !zebra_killed_by_dual_iso_rec();
         if (!zd) digic_zebra_cleanup();
         
 #ifdef CONFIG_RAW_LIVEVIEW
