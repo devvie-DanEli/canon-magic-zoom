@@ -112,6 +112,7 @@ static struct mem_fields mem_slot_fields(int slot)
     return f;
 }
 
+
 int mem_recall_is_available(void)
 {
     return is_movie_mode() && !RECORDING;
@@ -137,6 +138,53 @@ int mem_recall_slot_has_data(int slot)
     if (slot < 0 || slot > 2)
         return 0;
     return *mem_slot_fields(slot).valid != 0;
+}
+
+static void mem_snapshot_from_slot(int slot)
+{
+    struct mem_fields f = mem_slot_fields(slot);
+    mem_loaded_iso = *f.iso;
+    mem_loaded_shutter = *f.shutter;
+    mem_loaded_aperture = *f.aperture;
+    mem_loaded_wb_mode = *f.wb_mode;
+    mem_loaded_kelvin = *f.kelvin;
+    mem_loaded_crop_mode = *f.crop_mode;
+    mem_loaded_ar = *f.ar;
+    mem_loaded_res = *f.res;
+    mem_loaded_fps = *f.fps;
+    mem_loaded_bit = *f.bit;
+}
+
+static int mem_live_matches_loaded(void)
+{
+    int mode = 0, ar = 0, res = 0, fps = 0, bit = 2;
+    if (mem_loaded_slot < 0)
+        return 0;
+    if (lens_info.raw_iso != mem_loaded_iso) return 0;
+    if (lens_info.raw_shutter != mem_loaded_shutter) return 0;
+    if (lens_info.raw_aperture != mem_loaded_aperture) return 0;
+    if (lens_info.wb_mode != mem_loaded_wb_mode) return 0;
+    if (lens_info.wb_mode == WB_KELVIN &&
+        lens_info.kelvin != mem_loaded_kelvin) return 0;
+    if (crop_rec_memory_capture &&
+        crop_rec_memory_capture(&mode, &ar, &res, &fps, &bit))
+    {
+        if (mode != mem_loaded_crop_mode) return 0;
+        if (ar != mem_loaded_ar) return 0;
+        if (res != mem_loaded_res) return 0;
+        if (fps != mem_loaded_fps) return 0;
+        if (bit != mem_loaded_bit) return 0;
+    }
+    return 1;
+}
+
+static const char *mem_slot_status_text(int slot)
+{
+    if (!mem_recall_slot_has_data(slot))
+        return "empty";
+    if (slot == mem_loaded_slot && mem_live_matches_loaded())
+        return "loaded";
+    return "saved";
 }
 
 int mem_recall_save(int slot)
