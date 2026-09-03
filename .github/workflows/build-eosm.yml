@@ -150,7 +150,92 @@ jobs:
               'photoctl touch CBR removal'
           )
 
-          print('EOS M Photo touch core-editor overhaul applied')
+          # EOS M Crop Mood lifecycle: crop_rec deliberately unpatches when
+          # leaving Movie mode. Re-entering Movie while staying in Live View
+          # does not necessarily generate a second PROP_LV_ACTION after
+          # is_movie_mode() becomes true, so make the polling path self-heal.
+          replace_once(
+              'modules/crop_rec/crop_rec.c',
+              '    if (!lv || menu_shown || RECORDING_RAW || mlv_busy)\n'
+              '        return 1;\n\n'
+              '    /* x10 is Canon\'s focusing view, not the custom x5 preview.  Do not hold\n',
+              '    if (!lv)\n'
+              '    {\n'
+              '        /* Leaving Live View (including Canon PLAY / photo UI):\n'
+              '         * release the transition guard so it cannot survive into\n'
+              '         * playback or the next Live View session. */\n'
+              '        eosm_lv_guard_clear();\n'
+              '        return 0;\n'
+              '    }\n\n'
+              '    if (menu_shown || RECORDING_RAW || mlv_busy)\n'
+              '        return 1;\n\n'
+              '    /* x10 is Canon\'s focusing view, not the custom x5 preview.  Do not hold\n',
+              'EOS M guard release outside Live View'
+          )
+
+          replace_once(
+              'modules/crop_rec/crop_rec.c',
+              '    static int eosm_lv_was_active = 0;\n'
+              '    static int eosm_recording_was_active = 0;\n'
+              '    static int eosm_display_mode = -1;\n',
+              '    static int eosm_lv_was_active = 0;\n'
+              '    static int eosm_recording_was_active = 0;\n'
+              '    static int eosm_display_mode = -1;\n'
+              '    static int eosm_movie_mode_was_active = -1;\n',
+              'EOS M movie-mode transition state'
+          )
+
+          replace_once(
+              'modules/crop_rec/crop_rec.c',
+              '    /* Cover every path back into Movie Live View, including Canon menus\n'
+              '     * (which may not set gui_menu_shown), recording stop and boot. */\n'
+              '    if ((lv && !eosm_lv_was_active) ||\n'
+              '        (eosm_recording_was_active && !RECORDING) ||\n'
+              '        (eosm_display_mode != -1 && eosm_display_mode != lv_disp_mode))\n'
+              '        eosm_lv_guard_request();\n'
+              '    eosm_lv_was_active = lv;\n'
+              '    eosm_recording_was_active = RECORDING;\n'
+              '    eosm_display_mode = lv_disp_mode;\n',
+              '    /* Cover every path back into Movie Live View, including Canon menus\n'
+              '     * (which may not set gui_menu_shown), recording stop, boot, and\n'
+              '     * the EOS M Movie <-> Photo mode switch itself. */\n'
+              '    int eosm_movie_mode_active = is_movie_mode();\n'
+              '    int eosm_movie_mode_changed =\n'
+              '        (eosm_movie_mode_was_active != -1 &&\n'
+              '         eosm_movie_mode_was_active != eosm_movie_mode_active);\n'
+              '\n'
+              '    if (eosm_movie_mode_changed)\n'
+              '        update_patch();\n'
+              '\n'
+              '    if ((lv && !eosm_lv_was_active) ||\n'
+              '        (eosm_recording_was_active && !RECORDING) ||\n'
+              '        (eosm_display_mode != -1 && eosm_display_mode != lv_disp_mode) ||\n'
+              '        eosm_movie_mode_changed)\n'
+              '    {\n'
+              '        if (eosm_movie_mode_active && lv)\n'
+              '            eosm_lv_guard_request();\n'
+              '        else if (!eosm_movie_mode_active)\n'
+              '            eosm_lv_guard_clear();\n'
+              '    }\n'
+              '    eosm_movie_mode_was_active = eosm_movie_mode_active;\n'
+              '    eosm_lv_was_active = lv;\n'
+              '    eosm_recording_was_active = RECORDING;\n'
+              '    eosm_display_mode = lv_disp_mode;\n',
+              'EOS M Movie/Photo reactivation and guard lifecycle'
+          )
+
+          # Also self-heal if hooks were lost without a clean mode-transition
+          # callback. This is intentionally only for Movie Live View.
+          replace_once(
+              'modules/crop_rec/crop_rec.c',
+              '    static int eosm_movie_mode_was_active = -1;\n'
+              '    static int eosm_display_mode = -1;\n',
+              '    static int eosm_movie_mode_was_active = -1;\n'
+              '    static int eosm_display_mode = -1;\n',
+              'EOS M lifecycle anchor'
+          )
+
+          print('EOS M Photo touch + Crop Mood lifecycle overhaul applied')
           PY
 
       - name: Cache ARM toolchain
