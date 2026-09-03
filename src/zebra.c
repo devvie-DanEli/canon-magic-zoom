@@ -41,7 +41,6 @@
 #include "lvinfo.h"
 #include "powersave.h"
 #include "module.h"
-#include "../modules/dual_iso/dual_iso.h"
 
 #include "imgconv.h"
 #include "falsecolor.h"
@@ -333,14 +332,15 @@ int nondigic_zoom_overlay_enabled()
 static CONFIG_INT("kill.zebra.dualiso.rec", kill_zebra_dual_iso_rec, 0);
 static CONFIG_INT("kill.fp.dualiso.rec", kill_fp_dual_iso_rec, 0);
 
-static int (*dual_iso_enabled_fn)(void) = MODULE_FUNCTION(dual_iso_is_enabled);
+/* Pointer name MUST match the exported symbol for MODULE_FUNCTION relocation. */
+static int (*dual_iso_is_enabled)(void) = MODULE_FUNCTION(dual_iso_is_enabled);
 
 /* Dual ISO menu ON (isoless_hdr), via module. 0 if module missing. */
 static int dual_iso_menu_is_on(void)
 {
-    if (!dual_iso_enabled_fn)
+    if (!dual_iso_is_enabled)
         return 0;
-    return dual_iso_enabled_fn() ? 1 : 0;
+    return dual_iso_is_enabled() ? 1 : 0;
 }
 
 /* True only while Dual ISO menu is ON AND we are recording (H.264 or RAW). */

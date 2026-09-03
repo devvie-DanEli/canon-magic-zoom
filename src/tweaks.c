@@ -2372,7 +2372,8 @@ int digic_auto_edge_should_hide_software_overlays(void)
  * if that module isn't loaded. Must be named exactly like the module
  * symbol for MODULE_FUNCTION() to wire it up correctly. */
 static int (*dual_iso_is_active)() = MODULE_FUNCTION(dual_iso_is_active);
-static int (*dual_iso_enabled_fn)(void) = MODULE_FUNCTION(dual_iso_is_enabled);
+/* Pointer name MUST match exported symbol for MODULE_FUNCTION relocation. */
+static int (*dual_iso_is_enabled)(void) = MODULE_FUNCTION(dual_iso_is_enabled);
 
 CONFIG_INT("bmp.color.scheme", bmp_color_scheme, 0);
 
@@ -2440,7 +2441,7 @@ static void preview_contrast_n_saturation_step()
     int digic_peak_effective = preview_peaking;
     /* Auto Edge: Digic Edge Image only while Dual ISO menu is ON and recording.
      * Uses MODULE_FUNCTION — never the weak dual_iso.h stub. */
-    int dual_on = dual_iso_enabled_fn && dual_iso_enabled_fn();
+    int dual_on = dual_iso_is_enabled && dual_iso_is_enabled();
     int auto_edge_now =
         digic_peak_auto_edge_on_dualiso &&
         (RECORDING || RECORDING_RAW) &&
