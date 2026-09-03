@@ -54,8 +54,8 @@ jobs:
                   data = data.replace(old, new, 1)
               open(path, 'w').write(data)
 
-          # Photo-mode touch must reach photoctl before the core Live View
-          # gesture router. Video mode keeps the original ordering unchanged.
+          # Photo touch gets first refusal and then terminates the touch event.
+          # This keeps the 2x2 Slim category grid as a menu-only surface.
           patch_file('src/gui-common.c', [
               (
                   '#ifdef CONFIG_SLIM_MENUS\n'
@@ -67,7 +67,8 @@ jobs:
                   '         event->param == BGMT_UNTOUCH_2_FINGER) &&\n'
                   '        !is_movie_mode())\n'
                   '    {\n'
-                  '        if (handle_module_keys(event) == 0) return 0;\n'
+                  '        handle_module_keys(event);\n'
+                  '        return 0;\n'
                   '    }\n'
                   '#endif\n\n'
                   '#ifdef CONFIG_SLIM_MENUS\n'
@@ -76,8 +77,8 @@ jobs:
               )
           ])
 
-          # photoctl owns the Photo touchscreen. Unassigned Photo touches are
-          # intentionally consumed so Canon cannot turn them into its Settings grid.
+          # photoctl still consumes unassigned Photo touches internally as a
+          # second line of defense if an event reaches the module directly.
           patch_file('modules/photoctl/photoctl.c', [
               (
                   '            if (!photoctl_touch_get_xy(event, &x, &y))\n'
