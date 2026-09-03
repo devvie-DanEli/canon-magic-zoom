@@ -29,6 +29,13 @@ jobs:
             fi
           done
 
+      - name: Enable Photo control module for autoload
+        run: |
+          set -euo pipefail
+          grep -q '"photoctl"' src/module.c || \
+            sed -i 's/"hdmi_out"};/"hdmi_out", "photoctl"};/' src/module.c
+          grep 'core_modules' src/module.c
+
       - name: Cache ARM toolchain
         id: cache-toolchain
         uses: actions/cache@v4
@@ -58,7 +65,7 @@ jobs:
           ls -lh platform/EOSM.202/autoexec.bin
           ls -lh platform/EOSM.202/magiclantern-*.zip
           zipfile=$(ls platform/EOSM.202/magiclantern-*.zip)
-          for mod in crop_rec.mo dual_iso.mo hdmi_out.mo mlv_lite.mo mlv_play.mo mlv_snd.mo sd_uhs.mo file_man.mo bench.mo; do
+          for mod in crop_rec.mo dual_iso.mo hdmi_out.mo mlv_lite.mo mlv_play.mo mlv_snd.mo sd_uhs.mo file_man.mo bench.mo photoctl.mo; do
             if ! unzip -l "$zipfile" | grep -q "$mod"; then
               echo "Missing from zip: $mod"
               unzip -l "$zipfile" | grep '\\.mo$' || true
