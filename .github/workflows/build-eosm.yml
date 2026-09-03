@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - feature/eosm-photo-touch-profiles
   workflow_dispatch: {}
 
 jobs:
