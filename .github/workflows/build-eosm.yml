@@ -58,9 +58,9 @@ jobs:
           # gesture router. Video mode keeps the original ordering unchanged.
           patch_file('src/gui-common.c', [
               (
-                  '    #ifdef CONFIG_SLIM_MENUS\n'
+                  '#ifdef CONFIG_SLIM_MENUS\n'
                   '    if (!menu_white_card_wb_handle_key(event->param, IS_FAKE(event))) return 0;\n',
-                  '    #ifdef CONFIG_EOSM\n'
+                  '#ifdef CONFIG_EOSM\n'
                   '    if ((event->param == BGMT_TOUCH_1_FINGER ||\n'
                   '         event->param == BGMT_UNTOUCH_1_FINGER ||\n'
                   '         event->param == BGMT_TOUCH_2_FINGER ||\n'
@@ -69,8 +69,8 @@ jobs:
                   '    {\n'
                   '        if (handle_module_keys(event) == 0) return 0;\n'
                   '    }\n'
-                  '    #endif\n\n'
-                  '    #ifdef CONFIG_SLIM_MENUS\n'
+                  '#endif\n\n'
+                  '#ifdef CONFIG_SLIM_MENUS\n'
                   '    if (!menu_white_card_wb_handle_key(event->param, IS_FAKE(event))) return 0;\n',
                   'photo module dispatch insertion'
               )
