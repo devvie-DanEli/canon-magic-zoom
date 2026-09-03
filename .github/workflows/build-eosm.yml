@@ -40,92 +40,117 @@ jobs:
             sed -i 's/"hdmi_out"};/"hdmi_out", "photoctl"};/' src/module.c
           grep 'core_modules' src/module.c
 
-      - name: Fix EOS M Photo touch routing
+      - name: Overhaul EOS M Photo Live View touch routing
         run: |
           set -euo pipefail
           python2 - <<'PY'
           from __future__ import print_function
 
-          def patch_file(path, replacements):
+          def replace_once(path, old, new, label):
               data = open(path, 'r').read()
-              for old, new, label in replacements:
-                  if old not in data:
-                      raise SystemExit('Photo touch patch: missing ' + label)
-                  data = data.replace(old, new, 1)
+              if old not in data:
+                  raise SystemExit('Photo touch overhaul: missing ' + label)
+              data = data.replace(old, new, 1)
               open(path, 'w').write(data)
 
-          # Photo touch gets first refusal and then terminates the touch event.
-          # This keeps the 2x2 Slim category grid as a menu-only surface.
-          patch_file('src/gui-common.c', [
-              (
-                  '#ifdef CONFIG_SLIM_MENUS\n'
-                  '    if (!menu_white_card_wb_handle_key(event->param, IS_FAKE(event))) return 0;\n',
-                  '#ifdef CONFIG_EOSM\n'
-                  '    if ((event->param == BGMT_TOUCH_1_FINGER ||\n'
-                  '         event->param == BGMT_UNTOUCH_1_FINGER ||\n'
-                  '         event->param == BGMT_TOUCH_2_FINGER ||\n'
-                  '         event->param == BGMT_UNTOUCH_2_FINGER) &&\n'
-                  '        !is_movie_mode())\n'
-                  '    {\n'
-                  '        handle_module_keys(event);\n'
-                  '        return 0;\n'
-                  '    }\n'
-                  '#endif\n\n'
-                  '#ifdef CONFIG_SLIM_MENUS\n'
-                  '    if (!menu_white_card_wb_handle_key(event->param, IS_FAKE(event))) return 0;\n',
-                  'photo module dispatch insertion'
-              )
-          ])
+          # The core Slim Live View editor already knows how to locate and
+          # adjust Aperture/Shutter/ISO/WB. Use it for Photo mode as well.
+          # The generic tap/menu gestures remain Movie-only.
+          replace_once(
+              'src/gui-common.c',
+              'static int slim_touch_lv_context_ok(void)\n'
+              '{\n'
+              '    return lv && is_movie_mode() && !RECORDING &&\n'
+              '           !gui_menu_shown() && lv_dispsize != 10 &&\n'
+              '           !slim_crop_rec_transition_busy();\n'
+              '}\n',
+              'static int slim_touch_lv_context_ok(void)\n'
+              '{\n'
+              '    return lv && !RECORDING && !gui_menu_shown() &&\n'
+              '           lv_dispsize != 10 && !slim_crop_rec_transition_busy();\n'
+              '}\n',
+              'shared Photo/Movie LV editor context'
+          )
 
-          # photoctl still consumes unassigned Photo touches internally as a
-          # second line of defense if an event reaches the module directly.
-          patch_file('modules/photoctl/photoctl.c', [
-              (
-                  '            if (!photoctl_touch_get_xy(event, &x, &y))\n'
-                  '                return 1;\n',
-                  '            if (!photoctl_touch_get_xy(event, &x, &y))\n'
-                  '                return 0;\n',
-                  'touch coordinate fallback'
-              ),
-              (
-                  '                if (field != LVINFO_TOUCH_APERTURE &&\n'
-                  '                    field != LVINFO_TOUCH_SHUTTER &&\n'
-                  '                    field != LVINFO_TOUCH_ISO &&\n'
-                  '                    field != LVINFO_TOUCH_WB)\n'
-                  '                    return 1;\n',
-                  '                if (field != LVINFO_TOUCH_APERTURE &&\n'
-                  '                    field != LVINFO_TOUCH_SHUTTER &&\n'
-                  '                    field != LVINFO_TOUCH_ISO &&\n'
-                  '                    field != LVINFO_TOUCH_WB)\n'
-                  '                    return 0;\n',
-                  'Photo-only field consumption'
-              ),
-              (
-                  '        case BGMT_UNTOUCH_1_FINGER:\n'
-                  '            if (lvinfo_touch_editor_is_open())\n'
-                  '                return 0;\n'
-                  '            return 1;\n',
-                  '        case BGMT_UNTOUCH_1_FINGER:\n'
-                  '            if (lvinfo_touch_editor_is_open())\n'
-                  '                return 0;\n'
-                  '            return 0;\n',
-                  'Photo touch release consumption'
-              ),
-              (
-                  '        case BGMT_TOUCH_2_FINGER:\n'
-                  '        case BGMT_UNTOUCH_2_FINGER:\n'
-                  '            if (lvinfo_touch_editor_is_open())\n'
-                  '                return 0;\n'
-                  '            return 1;\n',
-                  '        case BGMT_TOUCH_2_FINGER:\n'
-                  '        case BGMT_UNTOUCH_2_FINGER:\n'
-                  '            if (lvinfo_touch_editor_is_open())\n'
-                  '                return 0;\n'
-                  '            return 0;\n',
-                  'Photo two-finger consumption'
-              )
-          ])
-          print('EOS M Photo touch routing patched')
+          replace_once(
+              'src/gui-common.c',
+              '    if (monitoring_graph_touch_toggle(x, y))\n'
+              '        return 1;\n\n'
+              '    if (mem_recall_panel_is_open())\n'
+              '        return mem_recall_panel_touch(x, y);\n',
+              '    if (is_movie_mode() && monitoring_graph_touch_toggle(x, y))\n'
+              '        return 1;\n\n'
+              '    if (is_movie_mode() && mem_recall_panel_is_open())\n'
+              '        return mem_recall_panel_touch(x, y);\n',
+              'Movie-only auxiliary touch controls'
+          )
+
+          replace_once(
+              'src/gui-common.c',
+              '            slim_touch_lv_control_consumed = slim_touch_lv_direct_editor(event);\n'
+              '            if (slim_touch_lv_control_consumed)\n'
+              '                return 0;\n'
+              '            /* Tap gestures (including Quick Panel) only originate from the\n',
+              '            slim_touch_lv_control_consumed = slim_touch_lv_direct_editor(event);\n'
+              '            if (slim_touch_lv_control_consumed)\n'
+              '                return 0;\n'
+              '            if (!is_movie_mode())\n'
+              '            {\n'
+              '                /* Photo mode has field-editor touch only. Do not enter\n'
+              '                 * the Movie tap/Quick Screen gesture state machine. */\n'
+              '                slim_touch_lv_control_consumed = 1;\n'
+              '                slim_touch_lv_pressed = 0;\n'
+              '                slim_touch_tap_count = 0;\n'
+              '                slim_touch_tap_deadline = 0;\n'
+              '                return 0;\n'
+              '            }\n'
+              '            /* Tap gestures (including Quick Panel) only originate from the\n',
+              'Photo-specific no-fallthrough gate'
+          )
+
+          replace_once(
+              'src/gui-common.c',
+              '        if (slim_touch_lv_context_ok())\n'
+              '        {\n'
+              '            /* Keep the existing simultaneous two-finger Last Settings shortcut. */\n'
+              '            gui_open_last_menu_selection();\n'
+              '            return 0;\n'
+              '        }\n',
+              '        if (slim_touch_lv_context_ok() && is_movie_mode())\n'
+              '        {\n'
+              '            /* Keep the existing simultaneous two-finger Last Settings shortcut. */\n'
+              '            gui_open_last_menu_selection();\n'
+              '            return 0;\n'
+              '        }\n'
+              '        if (slim_touch_lv_context_ok())\n'
+              '            return 0;\n',
+              'Movie-only two-finger gesture'
+          )
+
+          replace_once(
+              'src/gui-common.c',
+              'static void slim_touch_open_for_taps(int taps)\n'
+              '{\n'
+              '    if (!slim_touch_lv_context_ok() || lvinfo_touch_editor_is_open())\n'
+              '        return;\n',
+              'static void slim_touch_open_for_taps(int taps)\n'
+              '{\n'
+              '    if (!slim_touch_lv_context_ok() || !is_movie_mode() ||\n'
+              '        lvinfo_touch_editor_is_open())\n'
+              '        return;\n',
+              'Movie-only tap launcher'
+          )
+
+          # The custom module no longer participates in touch dispatch. Keep
+          # it loaded exclusively for Photo memory/profile support.
+          replace_once(
+              'modules/photoctl/photoctl.c',
+              '    MODULE_CBR(CBR_KEYPRESS_RAW, photoctl_handle_touch, 0)\n',
+              '',
+              'photoctl touch CBR removal'
+          )
+
+          print('EOS M Photo touch core-editor overhaul applied')
           PY
 
       - name: Cache ARM toolchain
