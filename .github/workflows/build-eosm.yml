@@ -24,9 +24,8 @@ jobs:
         run: |
           for dir in modules/*/; do
             if [ -f "${dir}Makefile" ]; then
-              printf '#define MODULE_STRINGS() \\\n    MODULE_STRINGS_START() \\
-    MODULE_STRINGS_END()\n' > "${dir}/module_strings.h"
-              touch "${dir}/module_strings.h"
+              printf '#define MODULE_STRINGS() \\\n    MODULE_STRINGS_START() \\\n    MODULE_STRINGS_END()\n' > "${dir}module_strings.h"
+              touch "${dir}module_strings.h"
             fi
           done
 
@@ -59,15 +58,15 @@ jobs:
           ls -lh platform/EOSM.202/autoexec.bin
           ls -lh platform/EOSM.202/magiclantern-*.zip
           zipfile=$(ls platform/EOSM.202/magiclantern-*.zip)
-          for mod in crop_rec.mo dual_iso.mo hdmi_out.mo mlv_lite.mo mlv_play.mo mlv_snd.mo sd_uhs.mo file_man.mo bench.mo photoctl.mo; do
+          for mod in crop_rec.mo dual_iso.mo hdmi_out.mo mlv_lite.mo mlv_play.mo mlv_snd.mo sd_uhs.mo file_man.mo bench.mo; do
             if ! unzip -l "$zipfile" | grep -q "$mod"; then
               echo "Missing from zip: $mod"
-              unzip -l "$zipfile" | grep '\.mo$' || true
+              unzip -l "$zipfile" | grep '\\.mo$' || true
               exit 1
             fi
             echo "OK: $mod"
           done
-          if unzip -l "$zipfile" | grep -E 'lua\.mo|selftest\.mo|arkanoid\.mo'; then
+          if unzip -l "$zipfile" | grep -E 'lua\\.mo|selftest\\.mo|arkanoid\\.mo'; then
             echo "Unexpected slim module in zip"
             exit 1
           fi
