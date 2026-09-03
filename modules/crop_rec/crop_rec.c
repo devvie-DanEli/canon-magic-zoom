@@ -6335,7 +6335,7 @@ int crop_rec_touch_adjust(int control, int delta)
     if (!is_movie_mode() || RECORDING)
         return 0;
 
-    if (control == 0 || control == 1)
+    if (control == 0 || control == 1 || control == 2)
     {
         now = get_ms_clock();
         if ((int)(now - slim_touch_crop_ready_at) < 0)
@@ -6350,22 +6350,29 @@ int crop_rec_touch_adjust(int control, int delta)
     switch (control)
     {
         case 0:
-            /* Direct Live View editor intentionally offers only 1x1/1x3/3x3.
-             * Full-Res LV remains available in the regular Movie menu. */
+            /* Crop mode: 1x1 / 1x3 / 3x3 (Full-Res LV stays in Movie menu). */
             slim_crop_sync_from_backend();
             slim_mode_ui = MOD(COERCE(slim_mode_ui, 0, 2) + delta, 3);
             slim_crop_apply_mode();
             break;
-        case 1: slim_crop_quick_res_select(0, delta); break;
-        case 2: slim_crop_fps_select(0, delta); break;
-        case 3: slim_crop_bit_select(0, delta); break;
+        case 1:
+            /* Aspect Ratio */
+            slim_crop_sync_from_backend();
+            slim_crop_ar_select(0, delta);
+            break;
+        case 2:
+            /* Video size / resolution within current AR */
+            slim_crop_quick_res_select(0, delta);
+            break;
+        case 3: slim_crop_fps_select(0, delta); break;
+        case 4: slim_crop_bit_select(0, delta); break;
         default:
-            if (control == 0 || control == 1)
+            if (control == 0 || control == 1 || control == 2)
                 sei(old_irq);
             return 0;
     }
 
-    if (control == 0 || control == 1)
+    if (control == 0 || control == 1 || control == 2)
     {
         sei(old_irq);
         slim_touch_crop_ready_at = get_ms_clock() + SLIM_TOUCH_CROP_SETTLE_MS;
@@ -6387,23 +6394,59 @@ int crop_rec_touch_get_value(int control, int slot, char *value, int size,
     value[0] = '\0';
     slim_crop_sync_from_backend();
 
+    /* control 0 = Crop mode, 1 = Aspect Ratio, 2 = Video size,
+     * 3 = FPS, 4 = Bit depth (Live View editor mapping). */
     if (control == 0)
     {
-        if (slot == 0)
+        snprintf(value, size, "%s",
+            slim_mode_ui == 0 ? "1x1" :
+            slim_mode_ui == 1 ? "1x3" :
+            slim_mode_ui == 2 ? "3x3" : "LV");
+        enabled = 1;
+    }
+    else if (control == 1)
+    {
+        if (slim_mode_ui == 3)
         {
+            snprintf(value, size, "3:2");
+            enabled = 0;
+        }
+        else if (slim_mode_ui == 0)
+        {
+            static const char *labels_1x1[] = {
+                "2.33:1", "2.35:1", "16:9", "3:2", "4:3"
+            };
+            slim_1x1_ar = COERCE(slim_1x1_ar, 0, 4);
+            snprintf(value, size, "%s", labels_1x1[slim_1x1_ar]);
+            enabled = 1;
+        }
+        else if (slim_mode_ui == 2)
+        {
+            static const char *labels_3x3[] = {
+                "16:9", "2:1", "2.20:1", "2.35:1", "3:2"
+            };
             snprintf(value, size, "%s",
-                slim_mode_ui == 0 ? "1x1" :
-                slim_mode_ui == 1 ? "1x3" :
-                slim_mode_ui == 2 ? "3x3" : "LV");
+                labels_3x3[COERCE(crop_preset_ar_menu, 0, 4)]);
+            enabled = 1;
         }
         else
         {
-            slim_crop_expected_res(&w, &h);
-            snprintf(value, size, "%dx%d", w, h);
-            enabled = slim_mode_ui != 3;
+            /* 1x3 */
+            static const char *labels_1x3[] = {
+                "16:9", "2:1", "2.20:1", "2.35:1", "2.39:1"
+            };
+            snprintf(value, size, "%s",
+                labels_1x3[COERCE(crop_preset_ar_menu, 0, 4)]);
+            enabled = 1;
         }
     }
-    else if (control == 1)
+    else if (control == 2)
+    {
+        slim_crop_expected_res(&w, &h);
+        snprintf(value, size, "%dx%d", w, h);
+        enabled = slim_mode_ui != 3 && slim_preset_choice_count() > 1;
+    }
+    else if (control == 3)
     {
         if (slim_mode_ui == 3)
         {
@@ -6427,11 +6470,12 @@ int crop_rec_touch_get_value(int control, int slot, char *value, int size,
             enabled = bits > 1;
         }
     }
-    else if (control == 2)
+    else if (control == 4)
     {
         snprintf(value, size, "%s",
             slim_bit_depth_ui == 0 ? "10 Bit" :
             slim_bit_depth_ui == 1 ? "12 Bit" : "14 Bit");
+        enabled = 1;
     }
     else
     {

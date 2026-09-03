@@ -31,8 +31,8 @@ static GUARDED_BY(lvinfo_sem)   int default_font = FONT_MED_LARGE | FONT_ALIGN_C
 static GUARDED_BY(lvinfo_sem)   int small_font = FONT_MED | FONT_ALIGN_CENTER;           /* used if the layout gets really tight */
 
 static enum lvinfo_touch_field lvinfo_touch_field = LVINFO_TOUCH_NONE;
-static char lvinfo_touch_menu_value[2][32];
-static int lvinfo_touch_menu_enabled[2] = { 1, 1 };
+static char lvinfo_touch_menu_value[3][32];
+static int lvinfo_touch_menu_enabled[3] = { 1, 1, 1 };
 static int lvinfo_touch_feedback_slot = -1;
 static int lvinfo_touch_feedback_sign;
 
@@ -143,10 +143,20 @@ static void lvinfo_touch_draw_editor(void)
 
     int value_y = LVINFO_TOUCH_VALUE_Y;
 
-    if (lvinfo_touch_field == LVINFO_TOUCH_CROP ||
-        lvinfo_touch_field == LVINFO_TOUCH_WB)
+    if (lvinfo_touch_field == LVINFO_TOUCH_CROP)
     {
-        /* Two columns: Crop uses mode/resolution; WB uses Kelvin + AWB. */
+        /* Three columns: Crop mode | Aspect Ratio | Video size */
+        bmp_fill(COLOR_BLACK, 30, LVINFO_TOUCH_BOX_Y, 660, LVINFO_TOUCH_BOX_H);
+        lvinfo_touch_draw_value(0, 140, value_y, lvinfo_touch_menu_value[0],
+                                lvinfo_touch_menu_enabled[0]);
+        lvinfo_touch_draw_value(1, 360, value_y, lvinfo_touch_menu_value[1],
+                                lvinfo_touch_menu_enabled[1]);
+        lvinfo_touch_draw_value(2, 580, value_y, lvinfo_touch_menu_value[2],
+                                lvinfo_touch_menu_enabled[2]);
+    }
+    else if (lvinfo_touch_field == LVINFO_TOUCH_WB)
+    {
+        /* Two columns: Kelvin | AWB */
         bmp_fill(COLOR_BLACK, LVINFO_TOUCH_CROP_X, LVINFO_TOUCH_BOX_Y,
                  LVINFO_TOUCH_CROP_W, LVINFO_TOUCH_BOX_H);
         lvinfo_touch_draw_value(0, 232, value_y, lvinfo_touch_menu_value[0],
@@ -834,8 +844,10 @@ void lvinfo_touch_editor_open(enum lvinfo_touch_field field)
     lvinfo_touch_feedback_slot = -1;
     lvinfo_touch_menu_value[0][0] = '\0';
     lvinfo_touch_menu_value[1][0] = '\0';
+    lvinfo_touch_menu_value[2][0] = '\0';
     lvinfo_touch_menu_enabled[0] = 1;
     lvinfo_touch_menu_enabled[1] = 1;
+    lvinfo_touch_menu_enabled[2] = 1;
     lens_display_set_dirty();
 }
 
@@ -843,9 +855,7 @@ void lvinfo_touch_editor_close(void)
 {
     lvinfo_touch_field = LVINFO_TOUCH_NONE;
     lvinfo_touch_feedback_slot = -1;
-    bmp_fill(COLOR_EMPTY, LVINFO_TOUCH_CROP_X - 2,
-             LVINFO_TOUCH_BOX_Y - 2,
-             LVINFO_TOUCH_CROP_W + 4, LVINFO_TOUCH_BOX_H + 4);
+    bmp_fill(COLOR_EMPTY, 28, LVINFO_TOUCH_BOX_Y - 2, 664, LVINFO_TOUCH_BOX_H + 4);
     lens_display_set_dirty();
 }
 
@@ -861,7 +871,7 @@ enum lvinfo_touch_field lvinfo_touch_editor_field(void)
 
 void lvinfo_touch_editor_set_item(int slot, const char *value, int enabled)
 {
-    if (slot < 0 || slot > 1)
+    if (slot < 0 || slot > 2)
         return;
     snprintf(lvinfo_touch_menu_value[slot],
              sizeof(lvinfo_touch_menu_value[slot]), "%s", value ? value : "--");
@@ -871,7 +881,7 @@ void lvinfo_touch_editor_set_item(int slot, const char *value, int enabled)
 
 int lvinfo_touch_editor_item_enabled(int slot)
 {
-    return slot >= 0 && slot <= 1 && lvinfo_touch_menu_enabled[slot];
+    return slot >= 0 && slot <= 2 && lvinfo_touch_menu_enabled[slot];
 }
 
 int lvinfo_touch_editor_hit_test(int x, int y, int *slot, int *sign)
@@ -888,20 +898,48 @@ int lvinfo_touch_editor_hit_test(int x, int y, int *slot, int *sign)
         return 0;
 
     {
-        int dual = (lvinfo_touch_field == LVINFO_TOUCH_CROP ||
-                    lvinfo_touch_field == LVINFO_TOUCH_WB);
-        box_x = dual ? LVINFO_TOUCH_CROP_X : LVINFO_TOUCH_SINGLE_X;
-        box_w = dual ? LVINFO_TOUCH_CROP_W : LVINFO_TOUCH_SINGLE_W;
+        int is_crop3 = (lvinfo_touch_field == LVINFO_TOUCH_CROP);
+        int is_wb2 = (lvinfo_touch_field == LVINFO_TOUCH_WB);
+        if (is_crop3)
+        {
+            box_x = 30;
+            box_w = 660;
+        }
+        else if (is_wb2)
+        {
+            box_x = LVINFO_TOUCH_CROP_X;
+            box_w = LVINFO_TOUCH_CROP_W;
+        }
+        else
+        {
+            box_x = LVINFO_TOUCH_SINGLE_X;
+            box_w = LVINFO_TOUCH_SINGLE_W;
+        }
         if (x < box_x || x >= box_x + box_w ||
             y < LVINFO_TOUCH_BOX_Y || y >= LVINFO_TOUCH_BOX_Y + LVINFO_TOUCH_BOX_H)
             return 0;
 
-        if (dual)
+        if (is_crop3)
+        {
+            int third = box_w / 3;
+            if (x < box_x + third)
+                *slot = 0;
+            else if (x < box_x + 2 * third)
+                *slot = 1;
+            else
+                *slot = 2;
+            arrow_cx = (*slot == 0) ? 140 : ((*slot == 1) ? 360 : 580);
+        }
+        else if (is_wb2)
+        {
             *slot = x < LVINFO_TOUCH_CROP_X + LVINFO_TOUCH_CROP_W / 2 ? 0 : 1;
+            arrow_cx = (*slot == 0) ? 232 : 488;
+        }
         else
+        {
             *slot = 0;
-
-        arrow_cx = dual ? (*slot == 0 ? 232 : 488) : 360;
+            arrow_cx = 360;
+        }
     }
     arrow_left = arrow_cx - 65;
     arrow_right = arrow_cx + 65;

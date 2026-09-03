@@ -142,9 +142,25 @@ static void slim_touch_lv_refresh_menu_editor(enum lvinfo_touch_field field)
         return;
     }
 
-    int control = field == LVINFO_TOUCH_CROP ? 0 :
-                  field == LVINFO_TOUCH_FPS ? 1 :
-                  field == LVINFO_TOUCH_BIT_DEPTH ? 2 : -1;
+    /* Crop: three columns — mode (0), aspect (1), video size (2).
+     * FPS uses control 3; bit depth uses control 4. */
+    if (field == LVINFO_TOUCH_CROP)
+    {
+        for (int s = 0; s < 3; s++)
+        {
+            enabled = 0;
+            value_ok = crop_rec_touch_get_value(
+                s, 0, value, sizeof(value), &enabled);
+            if (value_ok)
+                lvinfo_touch_editor_set_item(s, value, enabled);
+            else
+                lvinfo_touch_editor_set_item(s, "--", 0);
+        }
+        return;
+    }
+
+    int control = field == LVINFO_TOUCH_FPS ? 3 :
+                  field == LVINFO_TOUCH_BIT_DEPTH ? 4 : -1;
 
     if (control < 0)
         return;
@@ -154,13 +170,6 @@ static void slim_touch_lv_refresh_menu_editor(enum lvinfo_touch_field field)
         lvinfo_touch_editor_set_item(0, value, enabled);
     else
         lvinfo_touch_editor_set_item(0, value, 0);
-    if (control == 0)
-    {
-        enabled = 0;
-        value_ok = crop_rec_touch_get_value(
-            control, 1, value, sizeof(value), &enabled);
-        lvinfo_touch_editor_set_item(1, value, value_ok && enabled);
-    }
 }
 
 static void slim_touch_lv_refresh_menu_editor_delayed(int timer, void *opaque)
@@ -182,17 +191,17 @@ static void slim_touch_lv_apply_pending_menu_change(int timer, void *opaque)
     slim_touch_pending_menu_change = 0;
     if (slim_touch_pending_field == LVINFO_TOUCH_CROP)
     {
-        changed = crop_rec_touch_adjust(
-            slim_touch_pending_slot == 0 ? 0 : 1,
-            slim_touch_pending_sign);
+        /* slot 0=mode, 1=aspect, 2=video size */
+        int ctl = COERCE(slim_touch_pending_slot, 0, 2);
+        changed = crop_rec_touch_adjust(ctl, slim_touch_pending_sign);
     }
     else if (slim_touch_pending_field == LVINFO_TOUCH_FPS)
     {
-        changed = crop_rec_touch_adjust(2, slim_touch_pending_sign);
+        changed = crop_rec_touch_adjust(3, slim_touch_pending_sign);
     }
     else if (slim_touch_pending_field == LVINFO_TOUCH_BIT_DEPTH)
     {
-        changed = crop_rec_touch_adjust(3, slim_touch_pending_sign);
+        changed = crop_rec_touch_adjust(4, slim_touch_pending_sign);
     }
 
     if (changed)
