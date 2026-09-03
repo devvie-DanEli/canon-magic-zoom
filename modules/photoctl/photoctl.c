@@ -3,204 +3,24 @@
 #include <config.h>
 #include <menu.h>
 #include <property.h>
-#include <lvinfo.h>
 #include <lens.h>
 #include <shoot.h>
+#include <stdint.h>
 
 #ifdef CONFIG_EOSM
 
 /*
- * EOS M photo touch controls live here rather than in gui-common.c.
- * gui-common handles the existing Movie-mode touch gestures first; when it
- * leaves a Photo-mode touch unhandled, handle_module_keys() runs before the
- * event reaches Canon, which lets this module own only the Photo controls.
+ * Photo Live View touch control is implemented by the core EOS M/gui-common
+ * path in the build workflow. Keep this symbol and CBR entry because the
+ * workflow removes the old module-level touch callback before compiling.
  */
-
-static uint32_t photoctl_touch_word(void *obj, int index)
-{
-    uint32_t p = (uint32_t)obj;
-
-    if (!p || (p & 0xF0000000))
-        return index == 0 ? p : 0;
-
-    return ((volatile uint32_t *)p)[index];
-}
-
-static uint32_t photoctl_touch_nested_word(uint32_t p, int index)
-{
-    if (p < 0x00900000 || p >= 0x00A00000 || (p & 3))
-        return 0;
-    return ((volatile uint32_t *)p)[index];
-}
-
-static int photoctl_touch_get_xy(struct event *event, int *x, int *y)
-{
-    uint32_t w1 = photoctl_touch_word(event->obj, 1);
-    uint32_t packed = photoctl_touch_nested_word(w1, 1);
-
-    *x = packed & 0xFFFF;
-    *y = (packed >> 16) & 0xFFFF;
-    return *x < 720 && *y < 480;
-}
-
-static int photoctl_context_ok(void)
-{
-    return lv && !is_movie_mode() && !RECORDING &&
-           !gui_menu_shown() && lv_dispsize != 10;
-}
-
-static int photoctl_settings_ok(void)
-{
-    return lv && !is_movie_mode() && !RECORDING && lv_dispsize != 10;
-}
-
-static int (*dual_iso_is_enabled)() = MODULE_FUNCTION(dual_iso_is_enabled);
-static int (*dual_iso_slim_step_recovery)(int) =
-    MODULE_FUNCTION(dual_iso_slim_step_recovery);
-
-static void photoctl_refresh_wb_editor(void)
-{
-    char value[32];
-    int awb = lens_info.wb_mode == WB_AUTO;
-
-    if (awb)
-        snprintf(value, sizeof(value), "AWB");
-    else if (lens_info.wb_mode == WB_KELVIN)
-        snprintf(value, sizeof(value), "%dK", lens_info.kelvin);
-    else
-        snprintf(value, sizeof(value), "%s",
-            lens_info.wb_mode == WB_SUNNY ? "Sunny" :
-            lens_info.wb_mode == WB_CLOUDY ? "Cloudy" :
-            lens_info.wb_mode == WB_TUNGSTEN ? "Tungsten" :
-            lens_info.wb_mode == WB_FLUORESCENT ? "Fluor." :
-            lens_info.wb_mode == WB_FLASH ? "Flash" :
-            lens_info.wb_mode == WB_CUSTOM ? "Custom" :
-            lens_info.wb_mode == WB_SHADE ? "Shade" : "WB");
-
-    lvinfo_touch_editor_set_item(0, value, !awb);
-    lvinfo_touch_editor_set_item(1, awb ? "AWB ON" : "AWB OFF", 1);
-}
-
-static void photoctl_change_field(enum lvinfo_touch_field field, int slot, int sign)
-{
-    if (!lvinfo_touch_editor_item_enabled(slot))
-        return;
-
-    switch (field)
-    {
-        case LVINFO_TOUCH_APERTURE:
-            if (lens_info.lens_exists && lens_info.raw_aperture)
-                aperture_toggle((void *)-1, sign);
-            break;
-
-        case LVINFO_TOUCH_SHUTTER:
-            if (lens_info.raw_shutter)
-                shutter_toggle((void *)-1, sign);
-            break;
-
-        case LVINFO_TOUCH_ISO:
-            if (dual_iso_is_enabled && dual_iso_is_enabled())
-            {
-                if (dual_iso_slim_step_recovery)
-                    dual_iso_slim_step_recovery(sign > 0 ? 1 : -1);
-            }
-            else
-            {
-                iso_toggle((void *)-1, sign);
-            }
-            break;
-
-        case LVINFO_TOUCH_WB:
-            if (slot == 1)
-            {
-                if (sign > 0)
-                    lens_set_wb_mode(WB_AUTO);
-                else if (lens_info.wb_mode == WB_AUTO)
-                    lens_set_kelvin(5500);
-            }
-            else if (lens_info.wb_mode != WB_AUTO)
-            {
-                kelvin_toggle((void *)-1, sign);
-            }
-            photoctl_refresh_wb_editor();
-            break;
-
-        default:
-            break;
-    }
-
-    lens_display_set_dirty();
-}
-
 static unsigned int photoctl_handle_touch(unsigned int ctx)
 {
-    struct event *event = (struct event *)ctx;
-    int x, y;
-
-    if (!event || !photoctl_context_ok())
-        return 1;
-
-    switch (event->param)
-    {
-        case BGMT_TOUCH_1_FINGER:
-            if (!photoctl_touch_get_xy(event, &x, &y))
-                return 1;
-
-            if (lvinfo_touch_editor_is_open())
-            {
-                int slot = -1;
-                int sign = 0;
-
-                if (!lvinfo_touch_editor_hit_test(x, y, &slot, &sign))
-                {
-                    lvinfo_touch_editor_close();
-                    return 0;
-                }
-
-                if (sign && slot >= 0)
-                    photoctl_change_field(lvinfo_touch_editor_field(), slot, sign);
-
-                return 0;
-            }
-
-            {
-                enum lvinfo_touch_field field = lvinfo_touch_field_at(x, y);
-
-                /* Photo mode only gets ISO / shutter / aperture / WB. */
-                if (field != LVINFO_TOUCH_APERTURE &&
-                    field != LVINFO_TOUCH_SHUTTER &&
-                    field != LVINFO_TOUCH_ISO &&
-                    field != LVINFO_TOUCH_WB)
-                    return 1;
-
-                if ((field == LVINFO_TOUCH_APERTURE &&
-                     (!lens_info.lens_exists || !lens_info.raw_aperture)) ||
-                    (field == LVINFO_TOUCH_SHUTTER && !lens_info.raw_shutter))
-                    return 0;
-
-                lvinfo_touch_editor_open(field);
-                if (field == LVINFO_TOUCH_WB)
-                    photoctl_refresh_wb_editor();
-                return 0;
-            }
-
-        case BGMT_UNTOUCH_1_FINGER:
-            if (lvinfo_touch_editor_is_open())
-                return 0;
-            return 1;
-
-        case BGMT_TOUCH_2_FINGER:
-        case BGMT_UNTOUCH_2_FINGER:
-            if (lvinfo_touch_editor_is_open())
-                return 0;
-            return 1;
-
-        default:
-            return 1;
-    }
+    (void)ctx;
+    return 1;
 }
 
-/* ----------------------- Mode-separated exposure state ---------------- */
+/* ----------------------- Automatic mode memory ------------------------- */
 
 struct exposure_profile
 {
@@ -208,34 +28,169 @@ struct exposure_profile
     int iso;
     int shutter;
     int aperture;
+    int wb_mode;
+    int kelvin;
 };
 
 static struct exposure_profile photo_profile;
 static struct exposure_profile video_profile;
+
+/* Persist the last-used profile for each camera mode. */
+static CONFIG_INT("photoctl.last_photo.valid", photo_last_valid, 0);
+static CONFIG_INT("photoctl.last_photo.iso", photo_last_iso, 0);
+static CONFIG_INT("photoctl.last_photo.shutter", photo_last_shutter, 0);
+static CONFIG_INT("photoctl.last_photo.aperture", photo_last_aperture, 0);
+static CONFIG_INT("photoctl.last_photo.wb_mode", photo_last_wb_mode, WB_AUTO);
+static CONFIG_INT("photoctl.last_photo.kelvin", photo_last_kelvin, 5500);
+
+static CONFIG_INT("photoctl.last_video.valid", video_last_valid, 0);
+static CONFIG_INT("photoctl.last_video.iso", video_last_iso, 0);
+static CONFIG_INT("photoctl.last_video.shutter", video_last_shutter, 0);
+static CONFIG_INT("photoctl.last_video.aperture", video_last_aperture, 0);
+static CONFIG_INT("photoctl.last_video.wb_mode", video_last_wb_mode, WB_AUTO);
+static CONFIG_INT("photoctl.last_video.kelvin", video_last_kelvin, 5500);
+
 static int active_mode = -1;
 static int restore_pending = 0;
 static int restore_mode = -1;
+static int restore_attempts = 0;
 
-static int photoctl_profile_capture(struct exposure_profile *profile)
+static void photoctl_profile_sync_from_config(int movie, struct exposure_profile *profile)
+{
+    if (!profile)
+        return;
+
+    if (movie)
+    {
+        profile->valid = video_last_valid;
+        profile->iso = video_last_iso;
+        profile->shutter = video_last_shutter;
+        profile->aperture = video_last_aperture;
+        profile->wb_mode = video_last_wb_mode;
+        profile->kelvin = video_last_kelvin;
+    }
+    else
+    {
+        profile->valid = photo_last_valid;
+        profile->iso = photo_last_iso;
+        profile->shutter = photo_last_shutter;
+        profile->aperture = photo_last_aperture;
+        profile->wb_mode = photo_last_wb_mode;
+        profile->kelvin = photo_last_kelvin;
+    }
+}
+
+static void photoctl_profile_sync_to_config(int movie, const struct exposure_profile *profile)
+{
+    if (!profile)
+        return;
+
+    if (movie)
+    {
+        if (video_last_valid != profile->valid) video_last_valid = profile->valid;
+        if (video_last_iso != profile->iso) video_last_iso = profile->iso;
+        if (video_last_shutter != profile->shutter) video_last_shutter = profile->shutter;
+        if (video_last_aperture != profile->aperture) video_last_aperture = profile->aperture;
+        if (video_last_wb_mode != profile->wb_mode) video_last_wb_mode = profile->wb_mode;
+        if (video_last_kelvin != profile->kelvin) video_last_kelvin = profile->kelvin;
+    }
+    else
+    {
+        if (photo_last_valid != profile->valid) photo_last_valid = profile->valid;
+        if (photo_last_iso != profile->iso) photo_last_iso = profile->iso;
+        if (photo_last_shutter != profile->shutter) photo_last_shutter = profile->shutter;
+        if (photo_last_aperture != profile->aperture) photo_last_aperture = profile->aperture;
+        if (photo_last_wb_mode != profile->wb_mode) photo_last_wb_mode = profile->wb_mode;
+        if (photo_last_kelvin != profile->kelvin) photo_last_kelvin = profile->kelvin;
+    }
+}
+
+static int photoctl_profile_capture(int movie, struct exposure_profile *profile)
 {
     if (!profile || !lens_info.lens_exists)
         return 0;
 
-    /* Ignore a completely uninitialized property packet. */
-    if (!lens_info.raw_iso && !lens_info.raw_iso_auto)
+    if (!lens_info.raw_iso && !lens_info.raw_iso_auto &&
+        !lens_info.raw_shutter && !lens_info.raw_aperture)
         return 0;
 
     profile->iso = lens_info.raw_iso;
     profile->shutter = lens_info.raw_shutter;
     profile->aperture = lens_info.raw_aperture;
+    profile->wb_mode = lens_info.wb_mode;
+    profile->kelvin = lens_info.kelvin;
     profile->valid = 1;
+
+    photoctl_profile_sync_to_config(movie, profile);
     return 1;
+}
+
+static int photoctl_profile_matches(const struct exposure_profile *profile)
+{
+    if (!profile || !profile->valid)
+        return 0;
+
+    if (profile->iso && lens_info.raw_iso != profile->iso)
+        return 0;
+    if (profile->shutter && lens_info.raw_shutter != profile->shutter)
+        return 0;
+    if (profile->aperture && lens_info.raw_aperture != profile->aperture)
+        return 0;
+    if (lens_info.wb_mode != profile->wb_mode)
+        return 0;
+    if (profile->wb_mode == WB_KELVIN &&
+        profile->kelvin && lens_info.kelvin != profile->kelvin)
+        return 0;
+
+    return 1;
+}
+
+static void photoctl_profile_apply(const struct exposure_profile *profile)
+{
+    if (!profile || !profile->valid)
+        return;
+
+    if (profile->iso)
+        lens_set_rawiso(profile->iso);
+    if (profile->shutter)
+        lens_set_rawshutter(profile->shutter);
+    if (profile->aperture && lens_info.lens_exists)
+        lens_set_rawaperture(profile->aperture);
+
+    if (profile->wb_mode == WB_AUTO)
+        lens_set_wb_mode(WB_AUTO);
+    else if (profile->wb_mode == WB_KELVIN)
+        lens_set_kelvin(profile->kelvin ? profile->kelvin : 5500);
+    else
+        lens_set_wb_mode(profile->wb_mode);
+
+    lens_display_set_dirty();
+}
+
+static void photoctl_schedule_restore(int movie)
+{
+    struct exposure_profile *profile = movie ? &video_profile : &photo_profile;
+
+    if (!profile->valid)
+        photoctl_profile_sync_from_config(movie, profile);
+
+    if (!profile->valid)
+    {
+        restore_pending = 0;
+        photoctl_profile_capture(movie, profile);
+        return;
+    }
+
+    restore_mode = movie;
+    restore_attempts = 0;
+    restore_pending = 1;
+    delayed_call(350, photoctl_profile_apply_task, 0);
 }
 
 static void photoctl_profile_apply_task(int timer, void *opaque)
 {
-    struct exposure_profile *profile;
     int movie;
+    struct exposure_profile *profile;
 
     (void)timer;
     (void)opaque;
@@ -246,7 +201,7 @@ static void photoctl_profile_apply_task(int timer, void *opaque)
     movie = is_movie_mode() ? 1 : 0;
     if (movie != restore_mode)
     {
-        delayed_call(100, photoctl_profile_apply_task, 0);
+        restore_pending = 0;
         return;
     }
 
@@ -259,20 +214,20 @@ static void photoctl_profile_apply_task(int timer, void *opaque)
     profile = movie ? &video_profile : &photo_profile;
     if (!profile->valid)
     {
-        photoctl_profile_capture(profile);
         restore_pending = 0;
         return;
     }
 
-    if (profile->iso)
-        lens_set_rawiso(profile->iso);
-    if (profile->shutter)
-        lens_set_rawshutter(profile->shutter);
-    if (profile->aperture && lens_info.lens_exists)
-        lens_set_rawaperture(profile->aperture);
+    photoctl_profile_apply(profile);
 
-    restore_pending = 0;
-    lens_display_set_dirty();
+    if (photoctl_profile_matches(profile) || restore_attempts++ >= 12)
+    {
+        restore_pending = 0;
+        photoctl_profile_sync_to_config(movie, profile);
+        return;
+    }
+
+    delayed_call(120, photoctl_profile_apply_task, 0);
 }
 
 static unsigned int photoctl_profile_cbr(unsigned int ctx)
@@ -291,38 +246,45 @@ static unsigned int photoctl_profile_cbr(unsigned int ctx)
     if (active_mode < 0)
     {
         active_mode = movie;
-        photoctl_profile_capture(current);
-        return 0;
-    }
-
-    if (movie != active_mode)
-    {
-        /* Do not capture the old profile here.  Canon may already have
-         * replaced lens_info with the new mode's values. The old profile was
-         * updated continuously on the preceding frames. */
-        active_mode = movie;
+        photoctl_profile_sync_from_config(movie, current);
 
         if (current->valid)
         {
             restore_mode = movie;
             restore_pending = 1;
-            delayed_call(250, photoctl_profile_apply_task, 0);
+            restore_attempts = 0;
+            delayed_call(350, photoctl_profile_apply_task, 0);
         }
         else
         {
-            photoctl_profile_capture(current);
+            photoctl_profile_capture(movie, current);
         }
-
-        /* Don't leave the touch editor from the old mode on screen. */
-        if (lvinfo_touch_editor_is_open())
-            lvinfo_touch_editor_close();
-
         return 0;
     }
 
-    if (!restore_pending)
-        photoctl_profile_capture(current);
+    if (movie != active_mode)
+    {
+        active_mode = movie;
+        photoctl_profile_sync_from_config(movie, current);
 
+        if (current->valid)
+        {
+            restore_mode = movie;
+            restore_pending = 1;
+            restore_attempts = 0;
+            delayed_call(350, photoctl_profile_apply_task, 0);
+        }
+        else
+        {
+            photoctl_profile_capture(movie, current);
+        }
+        return 0;
+    }
+
+    if (restore_pending)
+        return 0;
+
+    photoctl_profile_capture(movie, current);
     return 0;
 }
 
@@ -343,13 +305,18 @@ static CONFIG_INT("photoctl.p3.iso", p3_iso, 0);
 static CONFIG_INT("photoctl.p3.shutter", p3_shutter, 0);
 static CONFIG_INT("photoctl.p3.aperture", p3_aperture, 0);
 
+static int photoctl_settings_ok(void)
+{
+    return lv && !is_movie_mode() && !RECORDING && lv_dispsize != 10;
+}
+
 static void photoctl_save_slot(int slot)
 {
     struct exposure_profile p;
 
     if (!photoctl_settings_ok())
         return;
-    if (!photoctl_profile_capture(&p))
+    if (!photoctl_profile_capture(0, &p))
         return;
 
     switch (slot)
@@ -378,13 +345,13 @@ static void photoctl_load_slot(int slot)
     switch (slot)
     {
         case 0:
-            valid=p1_valid; iso=p1_iso; shutter=p1_shutter; aperture=p1_aperture;
+            valid = p1_valid; iso = p1_iso; shutter = p1_shutter; aperture = p1_aperture;
             break;
         case 1:
-            valid=p2_valid; iso=p2_iso; shutter=p2_shutter; aperture=p2_aperture;
+            valid = p2_valid; iso = p2_iso; shutter = p2_shutter; aperture = p2_aperture;
             break;
         default:
-            valid=p3_valid; iso=p3_iso; shutter=p3_shutter; aperture=p3_aperture;
+            valid = p3_valid; iso = p3_iso; shutter = p3_shutter; aperture = p3_aperture;
             break;
     }
 
@@ -401,7 +368,7 @@ static void photoctl_load_slot(int slot)
     if (aperture && lens_info.lens_exists)
         lens_set_rawaperture(aperture);
 
-    photoctl_profile_capture(&photo_profile);
+    photoctl_profile_capture(0, &photo_profile);
     lens_display_set_dirty();
     NotifyBox(1200, "Loaded P%d", slot + 1);
 }
@@ -477,6 +444,8 @@ static struct menu_entry photoctl_menu[] =
 static unsigned int photoctl_init(void)
 {
     menu_add("Photo", photoctl_menu, COUNT(photoctl_menu));
+    photoctl_profile_sync_from_config(0, &photo_profile);
+    photoctl_profile_sync_from_config(1, &video_profile);
     return 0;
 }
 
@@ -496,6 +465,18 @@ MODULE_CBRS_START()
 MODULE_CBRS_END()
 
 MODULE_CONFIGS_START()
+    MODULE_CONFIG(photo_last_valid)
+    MODULE_CONFIG(photo_last_iso)
+    MODULE_CONFIG(photo_last_shutter)
+    MODULE_CONFIG(photo_last_aperture)
+    MODULE_CONFIG(photo_last_wb_mode)
+    MODULE_CONFIG(photo_last_kelvin)
+    MODULE_CONFIG(video_last_valid)
+    MODULE_CONFIG(video_last_iso)
+    MODULE_CONFIG(video_last_shutter)
+    MODULE_CONFIG(video_last_aperture)
+    MODULE_CONFIG(video_last_wb_mode)
+    MODULE_CONFIG(video_last_kelvin)
     MODULE_CONFIG(p1_valid)
     MODULE_CONFIG(p1_iso)
     MODULE_CONFIG(p1_shutter)
