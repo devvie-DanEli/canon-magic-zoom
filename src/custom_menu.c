@@ -25,6 +25,7 @@ static struct menu_entry custom_menu_placeholders[] =
     { .name = "Small Hacks",         .placeholder = 1 },
     { .name = "More Hacks",          .placeholder = 1 },
     { .name = "Card Benchmark",      .placeholder = 1 },
+    { .name = "Slower Overlay",       .placeholder = 1 },
 };
 
 static void custom_menu_init(void)

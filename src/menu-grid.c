@@ -4,7 +4,14 @@
 #include "font.h"
 #include "menu.h"
 #include "menu-grid.h"
+#include "slim-font.h"
 #include "gui-common.h"
+#include "config.h"
+#include "lens.h"
+#include "shoot.h"
+#include "fps.h"
+
+extern void lens_display_set_dirty(void);
 
 #ifdef CONFIG_SLIM_MENUS
 
@@ -25,8 +32,15 @@ static int grid_sel = 0;
 static int quick_screen_active = 0;
 static int quick_screen_feedback = -1;
 static int quick_screen_touch_latched = 0;
+static int white_card_wb_active = 0;
+static int white_card_wb_capturing = 0;
+static int white_card_wb_done = 0;
+static int white_card_wb_draw_state = -1;
+static volatile int white_card_wb_paint_pending = 0;
+static volatile int white_card_wb_close_pending = 0;
 /* Session-only: starts at White Balance after boot and is remembered. */
 static int quick_screen_sel = 0;
+CONFIG_INT("menu.quick.shutter.speed", quick_screen_shutter_speed, 0);
 
 #define QUICK_SCREEN_COLS  4
 #define QUICK_SCREEN_ROWS  2
@@ -220,6 +234,229 @@ void menu_quick_screen_close(void)
     quick_screen_touch_latched = 0;
 }
 
+int menu_white_card_wb_is_active(void)
+{
+    return white_card_wb_active;
+}
+
+static void white_card_wb_clear_overlay(void)
+{
+    /* Include a generous glyph margin so no antialiasing/shadow pixels from
+     * the previous frame remain after dismissing the overlay. */
+    bmp_fill(COLOR_EMPTY, 100, 194, 520, 196);
+}
+
+void menu_white_card_wb_close(void)
+{
+    if (!white_card_wb_active)
+        return;
+    white_card_wb_paint_pending = 0;
+    white_card_wb_close_pending = 1;
+}
+
+static void white_card_wb_close_delayed(int timer, void *opaque)
+{
+    (void)timer;
+    (void)opaque;
+    menu_white_card_wb_close();
+}
+
+void menu_white_card_wb_open(void)
+{
+    white_card_wb_active = 1;
+    white_card_wb_capturing = 0;
+    white_card_wb_done = 0;
+    white_card_wb_draw_state = -1;
+    white_card_wb_close_pending = 0;
+    white_card_wb_paint_pending = 1;
+    quick_screen_active = 0;
+    quick_screen_touch_latched = 0;
+    lens_display_set_dirty();
+}
+
+static void white_card_wb_panel_geometry(int *x, int *y, int *w, int *h,
+                                         const char **line1, const char **line2)
+{
+    const int padding = 12;
+    const int line_gap = 6;
+    const int font_h = fontspec_font(FONT_MED)->height;
+    int width1;
+    int width2 = 0;
+
+    if (white_card_wb_done)
+    {
+        *line1 = "White Balance Set";
+        *line2 = 0;
+    }
+    else if (white_card_wb_capturing)
+    {
+        *line1 = "Setting White Balance...";
+        *line2 = 0;
+    }
+    else
+    {
+        *line1 = "Place the White Card in";
+        *line2 = "the box and press SET";
+    }
+
+    width1 = bmp_string_width(FONT_MED, *line1);
+    if (*line2)
+        width2 = bmp_string_width(FONT_MED, *line2);
+    *w = MAX(width1, width2) + padding * 2;
+    *h = font_h + padding * 2 + (*line2 ? font_h + line_gap : 0);
+    *x = 360 - *w / 2;
+    *y = 292;
+}
+
+void menu_white_card_wb_draw(void)
+{
+    const int border = white_card_wb_done ? COLOR_GREEN1 : COLOR_ORANGE;
+    const int box_x = 326;
+    const int box_y = 206;
+    const int box_w = 68;
+    const int box_h = 68;
+    const int padding = 12;
+    const int line_gap = 6;
+    int text_x, text_y, text_w, text_h;
+    const char *line1;
+    const char *line2;
+    int draw_state;
+
+    if (!white_card_wb_active)
+        return;
+
+    draw_state = white_card_wb_done ? 2 : white_card_wb_capturing ? 1 : 0;
+    if (draw_state != white_card_wb_draw_state)
+    {
+        /* State text has different dimensions. Clear the complete maximum
+         * panel once before drawing the new state, otherwise the old two-line
+         * message remains underneath the smaller progress message. */
+        bmp_fill(COLOR_EMPTY, 100, 286, 520, 104);
+        white_card_wb_draw_state = draw_state;
+    }
+
+    /* Thick guide border, deliberately centered on the spot sampled by
+     * Magic Lantern's existing automatic Kelvin/green calculation. */
+    /* Filled edges are more reliable than nested one-pixel rectangles on the
+     * EOS M bitmap buffer and remain visibly thick over bright Live View. */
+    bmp_fill(border, box_x, box_y, box_w, 5);
+    bmp_fill(border, box_x, box_y + box_h - 5, box_w, 5);
+    bmp_fill(border, box_x, box_y + 5, 5, box_h - 10);
+    bmp_fill(border, box_x + box_w - 5, box_y + 5, 5, box_h - 10);
+
+    white_card_wb_panel_geometry(
+        &text_x, &text_y, &text_w, &text_h, &line1, &line2);
+    bmp_fill(COLOR_BLACK, text_x, text_y, text_w, text_h);
+    /* RBF fonts do not implement NO_BG_ERASE; using it became palette 0xFF
+     * and produced a cyan fringe. The already-black panel is the true bg. */
+    bmp_printf(FONT(FONT_MED, COLOR_WHITE, COLOR_BLACK),
+        360 - bmp_string_width(FONT_MED, line1) / 2,
+        text_y + padding, "%s", line1);
+    if (line2)
+        bmp_printf(FONT(FONT_MED, COLOR_WHITE, COLOR_BLACK),
+            360 - bmp_string_width(FONT_MED, line2) / 2,
+            text_y + padding + fontspec_font(FONT_MED)->height + line_gap,
+            "%s", line2);
+}
+
+void menu_white_card_wb_render_step(void)
+{
+    /* Called only from zebra's Live View renderer, while holding BMP_LOCK. */
+    if (white_card_wb_close_pending)
+    {
+        white_card_wb_close_pending = 0;
+        white_card_wb_paint_pending = 0;
+        white_card_wb_active = 0;
+        white_card_wb_capturing = 0;
+        white_card_wb_done = 0;
+        white_card_wb_draw_state = -1;
+        white_card_wb_clear_overlay();
+        lens_display_set_dirty();
+        return;
+    }
+
+    /* Opening first closes the Quick Panel. Wait for that transition, then
+     * paint the overlay exactly once. */
+    if (white_card_wb_active && white_card_wb_paint_pending &&
+        !gui_menu_shown())
+    {
+        menu_white_card_wb_draw();
+        white_card_wb_paint_pending = 0;
+    }
+}
+
+int menu_white_card_wb_handle_touch(int x, int y)
+{
+    int text_x, text_y, text_w, text_h;
+    const char *line1;
+    const char *line2;
+    int in_guide;
+    int in_panel;
+
+    /* The guide and message are intentionally inert. A tap outside them is
+     * the only touch gesture that dismisses this exclusive capture mode. */
+    if (!white_card_wb_active)
+        return 1;
+    white_card_wb_panel_geometry(
+        &text_x, &text_y, &text_w, &text_h, &line1, &line2);
+    in_guide = x >= 326 && x < 394 && y >= 206 && y < 274;
+    in_panel = x >= text_x && x < text_x + text_w &&
+               y >= text_y && y < text_y + text_h;
+    if (!in_guide && !in_panel)
+        menu_white_card_wb_close();
+    return 0;
+}
+
+int menu_white_card_wb_handle_key(int button_code, int is_fake)
+{
+    if (!white_card_wb_active)
+        return 1;
+
+    /* Touch coordinates are decoded by gui-common's Live View router. */
+    if (button_code == BGMT_TOUCH_1_FINGER ||
+        button_code == BGMT_TOUCH_2_FINGER ||
+        button_code == BGMT_UNTOUCH_1_FINGER ||
+        button_code == BGMT_UNTOUCH_2_FINGER)
+        return 1;
+
+    /* Preserve EOS M's physical DOWN long-press router, which generates the
+     * ML grid-launch event. All other d-pad, INFO and assigned SET actions
+     * remain blocked by this capture mode. */
+    if ((button_code == BGMT_PRESS_DOWN || button_code == BGMT_UNPRESS_DOWN) &&
+        !is_fake)
+        return 1;
+
+    if (button_code == BGMT_TRASH)
+    {
+        menu_white_card_wb_close();
+        return 1;
+    }
+
+    if ((button_code == BGMT_PRESS_SET
+#ifdef BGMT_Q_SET
+         || button_code == BGMT_Q_SET
+#endif
+        ) && !white_card_wb_capturing && !white_card_wb_done)
+    {
+        white_card_wb_capturing = 1;
+        white_card_wb_auto_start();
+        lens_display_set_dirty();
+        white_card_wb_paint_pending = 1;
+    }
+    return 0;
+}
+
+void menu_white_card_wb_capture_finished(void)
+{
+    if (!white_card_wb_active || !white_card_wb_capturing)
+        return;
+    white_card_wb_capturing = 0;
+    white_card_wb_done = 1;
+    lens_display_set_dirty();
+    white_card_wb_paint_pending = 1;
+    delayed_call(1000, white_card_wb_close_delayed, 0);
+}
+
 static void quick_screen_arrow(int cx, int tip_y, int up, int color)
 {
     const int height = 26;
@@ -260,10 +497,16 @@ static int quick_screen_value(
 
     if (index == 5)
     {
-        /* The normal Exposure row already calculates the angle from current
-         * FPS. Reuse those digits and draw a Canon-sized degree ring. */
-        snprintf(buf, size, "%s", info.rinfo[0] ? info.rinfo : "--");
-        *draw_degree = info.rinfo[0] != '\0';
+        if (quick_screen_shutter_speed)
+        {
+            snprintf(buf, size, "%s", lens_format_shutter_reciprocal(
+                get_current_shutter_reciprocal_x1000(), 5));
+        }
+        else
+        {
+            snprintf(buf, size, "%s", info.rinfo[0] ? info.rinfo : "--");
+            *draw_degree = info.rinfo[0] != '\0';
+        }
     }
     else if (index == 6)
     {
@@ -463,6 +706,26 @@ int menu_quick_screen_handle_touch(int x, int y)
         width = bmp_string_width(FONT_CANON, value) +
                 (draw_degree ? 12 : 0);
         text_x = cx - width / 2;
+        if (index == 5 &&
+            x >= text_x && x <= text_x + width &&
+            y >= value_y && y < down_tip_y - 40)
+        {
+            quick_screen_touch_latched = 1;
+            set_config_var_ptr(
+                &quick_screen_shutter_speed,
+                !quick_screen_shutter_speed);
+            menu_redraw();
+            return 0;
+        }
+        if (index == 0 &&
+            x >= text_x && x <= text_x + width &&
+            y >= value_y && y <= value_y + text_h)
+        {
+            quick_screen_touch_latched = 1;
+            menu_white_card_wb_open();
+            gui_stop_menu();
+            return 0;
+        }
         if (x >= text_x - 8 && x <= text_x + width + 8 &&
             y >= value_y - 6 && y <= value_y + text_h + 6)
         {
@@ -638,5 +901,13 @@ void menu_quick_screen_draw(void) { }
 int menu_quick_screen_handle_touch(int x, int y) { (void)x; (void)y; return 1; }
 void menu_quick_screen_touch_release(void) { }
 int menu_quick_screen_handle_key(int button_code) { (void)button_code; return 1; }
+int menu_white_card_wb_is_active(void) { return 0; }
+void menu_white_card_wb_open(void) { }
+void menu_white_card_wb_close(void) { }
+void menu_white_card_wb_draw(void) { }
+void menu_white_card_wb_render_step(void) { }
+int menu_white_card_wb_handle_touch(int x, int y) { (void)x; (void)y; return 1; }
+int menu_white_card_wb_handle_key(int button_code, int is_fake) { (void)button_code; (void)is_fake; return 1; }
+void menu_white_card_wb_capture_finished(void) { }
 
 #endif

@@ -98,6 +98,7 @@ void center_lv_afframe();
 
 /* kelvin WB (to be moved? where?) */
 void kelvin_n_gm_auto();
+void white_card_wb_auto_start();
 
 /* true if RGB multipliers are 1/1/1 (or very close) */
 int uniwb_is_active();

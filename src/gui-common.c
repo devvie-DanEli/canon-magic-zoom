@@ -456,6 +456,24 @@ static void slim_touch_register_tap(void)
 
 static int handle_slim_rec_touch_block(struct event * event)
 {
+    if (menu_white_card_wb_is_active())
+    {
+        int x, y;
+        switch (event->param)
+        {
+        case BGMT_TOUCH_1_FINGER:
+            if (eosm_touch_get_xy(event, &x, &y))
+                menu_white_card_wb_handle_touch(x, y);
+            return 0;
+        case BGMT_TOUCH_2_FINGER:
+        case BGMT_UNTOUCH_1_FINGER:
+        case BGMT_UNTOUCH_2_FINGER:
+            return 0;
+        default:
+            break;
+        }
+    }
+
     if (slim_crop_rec_transition_busy())
     {
         /* The crop module is validating Canon's newly-created LV buffers.
@@ -1248,6 +1266,7 @@ int handle_common_events_by_feature(struct event * event)
         last_time_active = get_seconds_clock();
 
 #ifdef CONFIG_SLIM_MENUS
+    if (!menu_white_card_wb_handle_key(event->param, IS_FAKE(event))) return 0;
     if (handle_slim_rec_touch_block(event) == 0) return 0;
     if (handle_slim_lv_editor_keys(event) == 0) return 0;
     if (handle_slim_info_longpress(event) == 0) return 0;

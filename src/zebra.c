@@ -41,6 +41,15 @@
 #include "lvinfo.h"
 #include "powersave.h"
 #include "module.h"
+#include "menu-grid.h"
+
+#ifdef CONFIG_SLIM_MENUS
+extern int lut_preview;
+extern void lut_preview_toggle(void *priv, int delta);
+extern MENU_UPDATE_FUNC(lut_preview_menu_update);
+extern int lut_preview_worker_needed(void);
+extern int slower_overlay;
+#endif
 
 #include "imgconv.h"
 #include "falsecolor.h"
@@ -195,6 +204,9 @@ static CONFIG_INT( "zebra.thr.lo",    zebra_level_lo, 0 );
 static CONFIG_INT( "zebra.rec", zebra_rec,  1 );
 #ifdef CONFIG_SLIM_MENUS
 static CONFIG_INT( "zebra.raw.under", zebra_raw_underexposure,  0 );
+#define ZEBRA_MODE_OVER       MONITOR_PERFORMANCE
+#define ZEBRA_MODE_OVER_UNDER 2
+#define ZEBRA_MODE_MAX        ZEBRA_MODE_OVER_UNDER
 #else
 static CONFIG_INT( "zebra.raw.under", zebra_raw_underexposure,  1 );
 #endif
@@ -856,7 +868,9 @@ static void zebra_init_slim_palette(void)
     zebra_slim_palette_entry(ZEBRA_PAL_YELLOW,   COLOR_RED, 210, 300, 120);
     zebra_slim_palette_entry(ZEBRA_PAL_MAGENTA,  COLOR_RED, 210, 300, 120);
     zebra_slim_palette_entry(ZEBRA_PAL_RED,      COLOR_RED, 210, 300, 120);
-    zebra_slim_palette_entry(ZEBRA_PAL_BLUE,     COLOR_RED, 210, 300, 120);
+    /* Shadow warning retains the same opacity and sampling as highlight
+     * zebras, but has a dedicated dark-blue palette entry. */
+    zebra_slim_palette_entry(ZEBRA_PAL_BLUE,     COLOR_BLUE, 150, 300, 120);
 }
 
 static void zebra_init_slim_palette_precision(void)
@@ -882,6 +896,18 @@ static void zebra_init_slim_palette_for_mode(void)
 
 static int raw_zebra_color_at(int x, int y, int white, int underexposed);
 
+static int raw_zebra_underexposure_threshold(void)
+{
+#ifdef CONFIG_SLIM_MENUS
+    if (zebra_draw != ZEBRA_MODE_OVER_UNDER)
+        return 0;
+    return ev_to_raw(-raw_info.dynamic_range / 100.0);
+#else
+    return zebra_raw_underexposure ?
+        ev_to_raw(- (raw_info.dynamic_range - (zebra_raw_underexposure - 1) * 100) / 100.0) : 0;
+#endif
+}
+
 #ifdef CONFIG_SLIM_MENUS
 static CONFIG_INT("raw.zebra", raw_zebra_enable, 1);
 #else
@@ -900,7 +926,7 @@ static void FAST draw_zebras_raw()
     if (!bvram) return;
 
     int white = raw_info.white_level;
-    int underexposed = zebra_raw_underexposure ? ev_to_raw(- (raw_info.dynamic_range - (zebra_raw_underexposure - 1) * 100) / 100.0) : 0;
+    int underexposed = raw_zebra_underexposure_threshold();
     
     int zoom0 = (int32_t)MEM(IMGPLAY_ZOOM_LEVEL_ADDR); /* stop when zooming in playback */
 
@@ -1139,7 +1165,7 @@ static void FAST draw_zebras_raw_lv()
 
     int white = raw_info.white_level;
     if (white > 16383) white = 15000;
-    int underexposed = zebra_raw_underexposure ? ev_to_raw(- (raw_info.dynamic_range - (zebra_raw_underexposure - 1) * 100) / 100.0) : 0;
+    int underexposed = raw_zebra_underexposure_threshold();
 
     int off = get_y_skip_offset_for_overlays();
 #ifdef CONFIG_SLIM_MENUS
@@ -1333,7 +1359,14 @@ static int zebra_rgb_color(int underexposed, int clipR, int clipG, int clipB, in
 
 static int zebra_rgb_solid_color(int underexposed, int clipR, int clipG, int clipB)
 {
-    if (underexposed) return ZEBRA_COLOR_WORD_SOLID(79);
+    if (underexposed)
+    {
+#ifdef CONFIG_SLIM_MENUS
+        return ZEBRA_COLOR_WORD_SOLID(ZEBRA_PAL_BLUE);
+#else
+        return ZEBRA_COLOR_WORD_SOLID(79);
+#endif
+    }
     
     switch ((clipR ? 4 : 0) |
             (clipG ? 2 : 0) |
@@ -2558,6 +2591,15 @@ static MENU_UPDATE_FUNC(zebra_draw_display)
     #endif
 }
 
+#ifdef CONFIG_SLIM_MENUS
+static MENU_UPDATE_FUNC(zebra_slim_mode_display)
+{
+    MENU_SET_VALUE("%s",
+        CURRENT_VALUE == 0 ? "OFF" :
+        CURRENT_VALUE == ZEBRA_MODE_OVER ? "Over" : "Over+Under");
+}
+#endif
+
 static MENU_UPDATE_FUNC(zebra_param_not_used_for_raw)
 {
     #ifdef FEATURE_RAW_ZEBRAS
@@ -3255,13 +3297,25 @@ struct menu_entry zebra_menus[] = {
     {
         .name = "Zebras",
         .priv       = &zebra_draw,
-        .max = MONITOR_PERFORMANCE,
+        .max = ZEBRA_MODE_MAX,
         .icon_type = IT_DICE,
-        .choices = CHOICES("OFF", "ON"),
-        .update     = monitoring_mode_display,
+        .choices = CHOICES("OFF", "Over", "Over+Under"),
+        .update = zebra_slim_mode_display,
         .edit_mode = EM_INLINE_ADJUST,
-        .help = "RAW RGB zebras: per-channel clip colors from sensor data.",
-        .help2 = "Off: disabled. On: performance overlay.",
+        .help = "RAW sensor zebras for clipped highlights and dark shadows.",
+        .help2 = "Over+Under adds dark-blue pixels at the 0 EV noise floor.",
+    },
+    {
+        .name = "LUT Preview",
+        .priv = &lut_preview,
+        .select = lut_preview_toggle,
+        .update = lut_preview_menu_update,
+        .max = 5,
+        .icon_type = IT_DICE,
+        .edit_mode = EM_INLINE_ADJUST,
+        .help = "Preview-only 3D LUT. Recorded RAW/MLV stays unchanged.",
+        .help2 = "Copy up to 5 named standard .cube LUTs to ML/LUTS and select with Left/Right.",
+        .depends_on = DEP_LIVEVIEW,
     },
 #else
     {
@@ -4295,6 +4349,13 @@ int zebra_should_run()
         !WAVEFORM_FULLSCREEN;
 }
 
+#ifdef CONFIG_SLIM_MENUS
+static int livev_hipriority_should_run(void)
+{
+    return zebra_should_run() || lut_preview_worker_needed();
+}
+#endif
+
 int zebra_draw_enabled(void)
 {
     return monitoring_enabled(zebra_draw);
@@ -4743,6 +4804,15 @@ livev_hipriority_task( void* unused )
             msleep(100);
         }
 
+#ifdef CONFIG_SLIM_MENUS
+        if (menu_white_card_wb_is_active())
+        {
+            BMP_LOCK(menu_white_card_wb_render_step();)
+            msleep(20);
+            continue;
+        }
+#endif
+
         int zd = monitoring_enabled(zebra_draw) && (lv_luma_is_accurate() || PLAY_OR_QR_MODE) && (zebra_rec || NOT_RECORDING) && !zebra_killed_by_dual_iso_rec();
         if (!zd) digic_zebra_cleanup();
         
@@ -4750,12 +4820,29 @@ livev_hipriority_task( void* unused )
         static int raw_flag = 0;
 #endif
         
+#ifdef CONFIG_SLIM_MENUS
+        if (!livev_hipriority_should_run())
+        {
+            /* A LUT may have just been suspended by REC or x10 while Global
+             * Draw is off. Run filter cleanup once before this task sleeps. */
+            #ifdef CONFIG_DISPLAY_FILTERS
+            extern void display_filter_step(int frame_number);
+            if (lv && !PLAY_OR_QR_MODE && !MENU_MODE)
+                display_filter_step(k);
+            #endif
+#else
         if (!zebra_should_run())
         {
+#endif
             while (clearscreen == 1 && (get_halfshutter_pressed() || dofpreview)) msleep(100);
             while (RECORDING_H264_STARTING) msleep(100);
+#ifdef CONFIG_SLIM_MENUS
+            if (!livev_hipriority_should_run())
+            {
+#else
             if (!zebra_should_run())
             {
+#endif
                 digic_zebra_cleanup();
                 if (lv && !gui_menu_shown()) redraw();
                 #ifdef CONFIG_ELECTRONIC_LEVEL
@@ -4764,7 +4851,11 @@ livev_hipriority_task( void* unused )
                 #ifdef CONFIG_RAW_LIVEVIEW
                 if (raw_flag) { raw_lv_release(); raw_flag = 0; }
                 #endif
-                while (!zebra_should_run()) 
+#ifdef CONFIG_SLIM_MENUS
+                while (!livev_hipriority_should_run())
+#else
+                while (!zebra_should_run())
+#endif
                 {
                     msleep(100);
                 }
@@ -4773,11 +4864,19 @@ livev_hipriority_task( void* unused )
                 crop_set_dirty(10);
                 msleep(500);
             }
+#ifdef CONFIG_SLIM_MENUS
+            if (!livev_hipriority_should_run())
+            {
+                /* false alarm */
+                continue;
+            }
+#else
             if (!zebra_should_run())
             {
                 /* false alarm */
                 continue;
             }
+#endif
         }
         #if 0
         draw_cropmark_area(); // just for debugging
@@ -4854,7 +4953,7 @@ livev_hipriority_task( void* unused )
             #ifdef FEATURE_FALSE_COLOR
             if (falsecolor_draw)
             {
-                if (k % 4 == 0)
+                if (k % ((slower_overlay && RECORDING) ? 6 : 4) == 0)
                     BMP_LOCK( if (lv) draw_false_downsampled(); )
             }
             else
@@ -4862,10 +4961,18 @@ livev_hipriority_task( void* unused )
             {
                 BMP_LOCK(
                     if (lv)
-                        draw_zebra_and_focus(
-                            k % ((focus_peaking ? 5 : 3) * (RECORDING ? 5 : 1)) == 0, /* should redraw zebras? */
-                            k % 2 == 1  /* should redraw focus peaking? */
-                        );
+                    {
+                        if (slower_overlay && RECORDING)
+                            draw_zebra_and_focus(
+                                k % (focus_peaking ? 5 : 3) == 0,
+                                k % 3 == 1
+                            );
+                        else
+                            draw_zebra_and_focus(
+                                k % ((focus_peaking ? 5 : 3) * (RECORDING ? 5 : 1)) == 0,
+                                k % 2 == 1
+                            );
+                    }
                 )
             }
         }
@@ -4878,7 +4985,7 @@ livev_hipriority_task( void* unused )
         #endif
 
         #ifdef CONFIG_ELECTRONIC_LEVEL
-        if (electronic_level && k % 2)
+        if (electronic_level && k % ((slower_overlay && RECORDING) ? 3 : 2))
             BMP_LOCK( if (lv) show_electronic_level(); )
         #endif
 
@@ -4928,7 +5035,7 @@ static void loprio_sleep()
     int fast_refresh =
         (monitoring_enabled(hist_draw) && monitoring_precision(hist_draw)) ||
         (monitoring_enabled(waveform_draw) && monitoring_precision(waveform_draw));
-    msleep(fast_refresh ? 100 : 200);
+    msleep((slower_overlay && RECORDING) ? 250 : (fast_refresh ? 100 : 200));
 #else
     msleep(200);
 #endif
@@ -5210,7 +5317,7 @@ static void zebra_init()
     hist_log = 0;
     hist_meter = 0;
     hist_warn = 1; /* slim has no Clip warning menu; dots always follow histogram */
-    if (zebra_draw > MONITOR_PERFORMANCE) zebra_draw = MONITOR_PERFORMANCE;
+    if (zebra_draw > ZEBRA_MODE_MAX) zebra_draw = ZEBRA_MODE_OVER;
     if (hist_draw > MONITOR_PERFORMANCE) hist_draw = MONITOR_PERFORMANCE;
     if (waveform_draw > MONITOR_PERFORMANCE) waveform_draw = MONITOR_PERFORMANCE;
     zebra_init_slim_palette_for_mode();

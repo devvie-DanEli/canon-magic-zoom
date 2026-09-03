@@ -2060,6 +2060,20 @@ static MENU_UPDATE_FUNC(kelvin_wbs_display)
 
 static int kelvin_auto_flag = 0;
 static int wbs_gm_auto_flag = 0;
+static int white_card_wb_sample_active = 0;
+
+void white_card_wb_auto_start()
+{
+    if (lv)
+    {
+        if (lens_info.wb_mode != WB_KELVIN ||
+            lens_info.kelvin < KELVIN_MIN || lens_info.kelvin > KELVIN_MAX)
+            lens_set_kelvin(5500);
+        white_card_wb_sample_active = 1;
+        kelvin_auto_flag = 1;
+        wbs_gm_auto_flag = 1;
+    }
+}
 static void kelvin_auto()
 {
     if (lv) kelvin_auto_flag = 1;
@@ -2127,12 +2141,16 @@ static int crit_kelvin(int k)
     }
 
     int Y, U, V;
-    get_spot_yuv(100, &Y, &U, &V);
+    if (white_card_wb_sample_active)
+        get_spot_yuv_ex(34, 0, 0, &Y, &U, &V, 0, 0);
+    else
+        get_spot_yuv(100, &Y, &U, &V);
 
     int R,G,B;
     yuv2rgb(Y,U,V,&R,&G,&B);
     
-    NotifyBox(5000, "Adjusting white balance...");
+    if (!white_card_wb_sample_active)
+        NotifyBox(5000, "Adjusting white balance...");
 
     return B - R;
 }
@@ -2146,12 +2164,16 @@ static int crit_wbs_gm(int k)
     msleep(750);
 
     int Y, U, V;
-    get_spot_yuv(100, &Y, &U, &V);
+    if (white_card_wb_sample_active)
+        get_spot_yuv_ex(34, 0, 0, &Y, &U, &V, 0, 0);
+    else
+        get_spot_yuv(100, &Y, &U, &V);
 
     int R,G,B;
     yuv2rgb(Y,U,V,&R,&G,&B);
 
-    NotifyBox(5000, "Adjusting white balance shift...");
+    if (!white_card_wb_sample_active)
+        NotifyBox(5000, "Adjusting white balance shift...");
 
     //~ BMP_LOCK( draw_ml_bottombar(0,0); )
     return (R+B)/2 - G;
@@ -6159,6 +6181,8 @@ shoot_task( void* unused )
         {
             wbs_gm_auto_run();
             wbs_gm_auto_flag = 0;
+            menu_white_card_wb_capture_finished();
+            white_card_wb_sample_active = 0;
         }
         #endif
         
