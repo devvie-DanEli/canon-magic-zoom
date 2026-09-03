@@ -334,26 +334,28 @@ static CONFIG_INT("kill.fp.dualiso.rec", kill_fp_dual_iso_rec, 0);
 /* Auto Edge (tweaks.c) also hides software overlays so Edge Image is clean. */
 extern int digic_auto_edge_should_hide_software_overlays(void);
 
-/* True while Dual ISO is in a recording context (menu on and/or actively applied). */
+/* True only while Dual ISO is ON in the menu AND we are recording.
+ * Do not use dual_iso_is_active() alone — it can be true outside Dual ISO
+ * recording and caused KILL FP/Zebras to fire on normal rec. */
 static int dual_iso_rec_context(void)
 {
     /* RAW rec sets CUSTOM_RECORDING; H.264 sets __recording. Either counts. */
     if (!RECORDING && !RECORDING_RAW)
         return 0;
-    if (dual_iso_is_enabled())
-        return 1;
-    if (dual_iso_is_active())
-        return 1;
-    return 0;
+    /* Menu Dual ISO must be enabled. */
+    if (!dual_iso_is_enabled())
+        return 0;
+    return 1;
 }
 
 static int dual_iso_currently_enabled()
 {
-    return dual_iso_is_enabled() || dual_iso_is_active();
+    return dual_iso_is_enabled() ? 1 : 0;
 }
 
 static int zebra_killed_by_dual_iso_rec()
 {
+    /* Strict: recording + Dual ISO ON + (kill option or Auto Edge hide). */
     if (!dual_iso_rec_context())
         return 0;
     if (kill_zebra_dual_iso_rec)

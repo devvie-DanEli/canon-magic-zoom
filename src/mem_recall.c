@@ -11,20 +11,21 @@
 
 #define MEM_SLOTS 3
 
-/* Panel layout (same vertical band as other LV touch editors). */
-#define MEM_BOX_X       80
-#define MEM_BOX_Y       120
-#define MEM_BOX_W       560
-#define MEM_BOX_H       240
-#define MEM_SLOT_CX     360
-#define MEM_SLOT_Y      150
-#define MEM_UP_Y        (MEM_SLOT_Y - 10)
-#define MEM_DOWN_Y      (MEM_SLOT_Y + 70)
-#define MEM_BTN_Y       280
-#define MEM_BTN_H       56
-#define MEM_SAVE_X      120
-#define MEM_LOAD_X      380
-#define MEM_BTN_W       200
+/* Centered panel — black field, orange accents (matches user mockup). */
+#define MEM_BOX_X       60
+#define MEM_BOX_Y       100
+#define MEM_BOX_W       600
+#define MEM_BOX_H       280
+#define MEM_CX          360
+#define MEM_SLOT_Y      175
+#define MEM_STATUS_Y    230
+#define MEM_BTN_Y       300
+#define MEM_BTN_H       50
+#define MEM_BTN_W       160
+#define MEM_SAVE_X      140
+#define MEM_LOAD_X      420
+#define MEM_CHEV_W      36
+#define MEM_CHEV_H      48
 
 static CONFIG_INT("mem.m0.valid", m0_valid, 0);
 static CONFIG_INT("mem.m0.iso", m0_iso, 0);
@@ -70,8 +71,8 @@ static int (*crop_rec_memory_apply)(int, int, int, int, int) =
     MODULE_FUNCTION(crop_rec_memory_apply);
 
 static int mem_panel_open;
-static int mem_ui_slot;          /* 0..2 */
-static int mem_ui_confirm;       /* 0 = main, 1 = overwrite? */
+static int mem_ui_slot;
+static int mem_ui_confirm;
 
 struct mem_fields {
     int *valid, *iso, *shutter, *aperture, *wb_mode, *kelvin;
@@ -239,31 +240,46 @@ int mem_recall_panel_is_open(void)
     return mem_panel_open;
 }
 
-static void mem_draw_arrow_up(int cx, int cy, int color)
+/* Filled left-pointing chevron (orange). */
+static void mem_draw_chev_left(int tip_x, int cy)
 {
-    for (int i = 0; i < 14; i++)
-        bmp_draw_rect(color, cx - i, cy + i, 2 * i + 1, 2);
+    for (int i = 0; i < MEM_CHEV_W; i++)
+    {
+        int half = (MEM_CHEV_H / 2) * (MEM_CHEV_W - i) / MEM_CHEV_W;
+        if (half < 1) half = 1;
+        bmp_fill(COLOR_ORANGE, tip_x + i, cy - half, 2, half * 2);
+    }
 }
 
-static void mem_draw_arrow_down(int cx, int cy, int color)
+/* Filled right-pointing chevron (orange). */
+static void mem_draw_chev_right(int tip_x, int cy)
 {
-    for (int i = 0; i < 14; i++)
-        bmp_draw_rect(color, cx - i, cy - i, 2 * i + 1, 2);
+    for (int i = 0; i < MEM_CHEV_W; i++)
+    {
+        int half = (MEM_CHEV_H / 2) * (MEM_CHEV_W - i) / MEM_CHEV_W;
+        if (half < 1) half = 1;
+        bmp_fill(COLOR_ORANGE, tip_x - i - 2, cy - half, 2, half * 2);
+    }
 }
 
 static void mem_draw_button(int x, int y, int w, int h, const char *label)
 {
-    bmp_fill(COLOR_GRAY(20), x, y, w, h);
-    bmp_draw_rect(COLOR_WHITE, x, y, w, h);
-    int tw = strlen(label) * 10;
-    bmp_printf(FONT(FONT_MED, COLOR_WHITE, COLOR_BLACK),
+    bmp_fill(COLOR_ORANGE, x, y, w, h);
+    /* Approximate center for MED font (~10 px/char). */
+    int tw = 0;
+    for (const char *p = label; *p; p++)
+        tw += 10;
+    bmp_printf(FONT(FONT_MED, COLOR_WHITE, COLOR_ORANGE),
                x + (w - tw) / 2, y + (h - 18) / 2, "%s", label);
 }
 
 void mem_recall_panel_draw(void)
 {
-    char label[16];
+    const char *slot_name;
+    const char *status;
     int has;
+    int slot_cx = MEM_CX;
+    int chev_cy = MEM_SLOT_Y + 16;
 
     if (!mem_panel_open)
         return;
@@ -273,29 +289,27 @@ void mem_recall_panel_draw(void)
     if (mem_ui_confirm)
     {
         bmp_printf(FONT(FONT_LARGE, COLOR_WHITE, COLOR_BLACK),
-                   MEM_SLOT_CX - 70, MEM_SLOT_Y + 10, "Overwrite?");
+                   slot_cx - 90, MEM_SLOT_Y, "Overwrite?");
         mem_draw_button(MEM_SAVE_X, MEM_BTN_Y, MEM_BTN_W, MEM_BTN_H, "Yes");
         mem_draw_button(MEM_LOAD_X, MEM_BTN_Y, MEM_BTN_W, MEM_BTN_H, "No");
         return;
     }
 
-    /* Slot navigator */
     has = mem_recall_slot_has_data(mem_ui_slot);
-    snprintf(label, sizeof(label), "%s%s%s",
-             mem_recall_slot_label(mem_ui_slot),
-             has ? "" : "-",
-             (mem_last_slot == mem_ui_slot) ? "*" : "");
+    slot_name = mem_recall_slot_label(mem_ui_slot);
+    status = has ? "saved" : "empty";
 
-    bmp_printf(FONT(FONT_LARGE, COLOR_GRAY(50), COLOR_BLACK),
-               MEM_SLOT_CX - 10, MEM_UP_Y + 8, "^");
+    /* Left / right orange chevrons around centered slot name. */
+    mem_draw_chev_left(slot_cx - 110, chev_cy);
+    mem_draw_chev_right(slot_cx + 110, chev_cy);
+
+    /* Slot label — white, large, centered (M1 ~ 2 chars). */
     bmp_printf(FONT(FONT_LARGE, COLOR_WHITE, COLOR_BLACK),
-               MEM_SLOT_CX - 28, MEM_SLOT_Y + 28, "%s", label);
-    bmp_printf(FONT(FONT_LARGE, COLOR_GRAY(50), COLOR_BLACK),
-               MEM_SLOT_CX - 10, MEM_DOWN_Y + 8, "v");
+               slot_cx - 28, MEM_SLOT_Y, "%s", slot_name);
 
-    /* Hint under slot */
-    bmp_printf(FONT(FONT_SMALL, COLOR_GRAY(40), COLOR_BLACK),
-               MEM_SLOT_CX - 50, MEM_DOWN_Y + 50, has ? "has data" : "empty");
+    /* Status under slot */
+    bmp_printf(FONT(FONT_MED, COLOR_WHITE, COLOR_BLACK),
+               slot_cx - 28, MEM_STATUS_Y, "%s", status);
 
     mem_draw_button(MEM_SAVE_X, MEM_BTN_Y, MEM_BTN_W, MEM_BTN_H, "Save");
     mem_draw_button(MEM_LOAD_X, MEM_BTN_Y, MEM_BTN_W, MEM_BTN_H, "Load");
@@ -311,7 +325,6 @@ int mem_recall_panel_touch(int x, int y)
     if (!mem_panel_open)
         return 0;
 
-    /* Outside panel → close */
     if (!mem_in_rect(x, y, MEM_BOX_X, MEM_BOX_Y, MEM_BOX_W, MEM_BOX_H))
     {
         mem_recall_panel_close();
@@ -322,7 +335,6 @@ int mem_recall_panel_touch(int x, int y)
     {
         if (mem_in_rect(x, y, MEM_SAVE_X, MEM_BTN_Y, MEM_BTN_W, MEM_BTN_H))
         {
-            /* Yes → overwrite */
             mem_ui_confirm = 0;
             mem_recall_save(mem_ui_slot);
             lens_display_set_dirty();
@@ -330,30 +342,28 @@ int mem_recall_panel_touch(int x, int y)
         }
         if (mem_in_rect(x, y, MEM_LOAD_X, MEM_BTN_Y, MEM_BTN_W, MEM_BTN_H))
         {
-            /* No → cancel */
             mem_ui_confirm = 0;
             lens_display_set_dirty();
             return 1;
         }
-        return 1; /* absorb taps inside dialog */
+        return 1;
     }
 
-    /* Up arrow region: previous slot */
-    if (mem_in_rect(x, y, MEM_SLOT_CX - 60, MEM_BOX_Y, 120, 70))
+    /* Left chevron / left half of slot row → previous */
+    if (mem_in_rect(x, y, MEM_CX - 160, MEM_SLOT_Y - 20, 120, 90))
     {
         mem_ui_slot = MOD(mem_ui_slot - 1, MEM_SLOTS);
         lens_display_set_dirty();
         return 1;
     }
-    /* Down arrow region: next slot */
-    if (mem_in_rect(x, y, MEM_SLOT_CX - 60, MEM_DOWN_Y, 120, 60))
+    /* Right chevron / right half → next */
+    if (mem_in_rect(x, y, MEM_CX + 40, MEM_SLOT_Y - 20, 120, 90))
     {
         mem_ui_slot = MOD(mem_ui_slot + 1, MEM_SLOTS);
         lens_display_set_dirty();
         return 1;
     }
 
-    /* Save */
     if (mem_in_rect(x, y, MEM_SAVE_X, MEM_BTN_Y, MEM_BTN_W, MEM_BTN_H))
     {
         if (mem_recall_slot_has_data(mem_ui_slot))
@@ -369,7 +379,6 @@ int mem_recall_panel_touch(int x, int y)
         return 1;
     }
 
-    /* Load */
     if (mem_in_rect(x, y, MEM_LOAD_X, MEM_BTN_Y, MEM_BTN_W, MEM_BTN_H))
     {
         mem_recall_load(mem_ui_slot);
