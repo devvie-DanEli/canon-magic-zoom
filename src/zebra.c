@@ -337,7 +337,8 @@ extern int digic_auto_edge_should_hide_software_overlays(void);
 /* True while Dual ISO is in a recording context (menu on and/or actively applied). */
 static int dual_iso_rec_context(void)
 {
-    if (!RECORDING)
+    /* RAW rec sets CUSTOM_RECORDING; H.264 sets __recording. Either counts. */
+    if (!RECORDING && !RECORDING_RAW)
         return 0;
     if (dual_iso_is_enabled())
         return 1;
@@ -1652,29 +1653,38 @@ static int zebra_digic_dirty = 0;
 static void draw_zebras( int Z )
 {
     uint8_t * const bvram = bmp_vram_real();
-    /* KILL Zebras / Auto Edge: do not draw. On rising edge, wipe leftover
-     * zebra pixels so they do not stick in LiveView during Dual ISO rec. */
+    /* KILL Zebras / Auto Edge during Dual ISO recording.
+     * EOS M has FEATURE_ZEBRA_FAST undefined — zebras are painted on the
+     * BMP layer. Stopping draw is not enough; the visible BMP must be
+     * cleared or stripes stay frozen in LiveView. */
     {
         static int prev_zb_kill = 0;
+        static int clear_frames = 0;
         int zk = zebra_killed_by_dual_iso_rec() ? 1 : 0;
         if (zk)
         {
 #ifdef FEATURE_ZEBRA_FAST
-            if (zebra_digic_dirty)
-            {
-                EngDrvOut(DIGIC_ZEBRA_REGISTER, 0);
-                zebra_digic_dirty = 0;
-            }
+            /* DIGIC path (cameras that still have it). */
+            EngDrvOut(DIGIC_ZEBRA_REGISTER, 0);
+            zebra_digic_dirty = 0;
 #endif
-            if (!prev_zb_kill && bvram_mirror_start)
+            if (!prev_zb_kill)
+                clear_frames = 8; /* wipe for several frames after kill engages */
+
+            if (clear_frames > 0)
             {
-                /* One-shot mirror clear removes frozen BMP zebra stripes. */
-                bvram_mirror_clear();
+                if (bvram_mirror_start)
+                    bvram_mirror_clear();
+                /* Erase visible BMP over the LV image area (not just the mirror). */
+                if (bvram)
+                    bmp_fill(0, os.x0, os.y0, os.x_max - os.x0, os.y_max - os.y0);
+                clear_frames--;
             }
             prev_zb_kill = 1;
             return;
         }
         prev_zb_kill = 0;
+        clear_frames = 0;
     }
     int zd = Z && monitoring_enabled(zebra_draw) && (lv_luma_is_accurate() || PLAY_OR_QR_MODE) && (zebra_rec || NOT_RECORDING); // when to draw zebras
     if (zd)
