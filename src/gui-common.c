@@ -116,15 +116,39 @@ static int slim_crop_rec_transition_busy(void)
  * choices without creating a lock-order dependency in the overlay task. */
 static void slim_touch_lv_refresh_menu_editor(enum lvinfo_touch_field field)
 {
+    char value[32] = "--";
+    int enabled = 0;
+    int value_ok;
+
+    /* White Balance: left = Kelvin, right = AWB ON/OFF */
+    if (field == LVINFO_TOUCH_WB)
+    {
+        int awb = (lens_info.wb_mode == WB_AUTO);
+        if (awb)
+            snprintf(value, sizeof(value), "AWB");
+        else if (lens_info.wb_mode == WB_KELVIN)
+            snprintf(value, sizeof(value), "%dK", lens_info.kelvin);
+        else
+            snprintf(value, sizeof(value), "%s",
+                lens_info.wb_mode == WB_SUNNY ? "Sunny" :
+                lens_info.wb_mode == WB_CLOUDY ? "Cloudy" :
+                lens_info.wb_mode == WB_TUNGSTEN ? "Tungsten" :
+                lens_info.wb_mode == WB_FLUORESCENT ? "Fluor." :
+                lens_info.wb_mode == WB_FLASH ? "Flash" :
+                lens_info.wb_mode == WB_CUSTOM ? "Custom" :
+                lens_info.wb_mode == WB_SHADE ? "Shade" : "WB");
+        lvinfo_touch_editor_set_item(0, value, !awb);
+        lvinfo_touch_editor_set_item(1, awb ? "AWB ON" : "AWB OFF", 1);
+        return;
+    }
+
     int control = field == LVINFO_TOUCH_CROP ? 0 :
                   field == LVINFO_TOUCH_FPS ? 1 :
                   field == LVINFO_TOUCH_BIT_DEPTH ? 2 : -1;
-    char value[32] = "--";
-    int enabled = 0;
 
     if (control < 0)
         return;
-    int value_ok = crop_rec_touch_get_value(
+    value_ok = crop_rec_touch_get_value(
         control, 0, value, sizeof(value), &enabled);
     if (value_ok)
         lvinfo_touch_editor_set_item(0, value, enabled);
@@ -206,7 +230,27 @@ static void slim_touch_lv_change_field(enum lvinfo_touch_field field,
                 iso_toggle((void *)-1, sign);
             break;
         case LVINFO_TOUCH_WB:
-            kelvin_toggle((void *)-1, sign);
+            if (slot == 1)
+            {
+                /* Right column: AWB toggle. Up = ON, Down = OFF. */
+                if (sign > 0)
+                    lens_set_wb_mode(WB_AUTO);
+                else if (lens_info.wb_mode == WB_AUTO)
+                {
+                    int k = lens_info.kelvin;
+                    if (k < 1500 || k > 15000)
+                        k = 5500;
+                    lens_set_kelvin(k);
+                }
+                slim_touch_lv_refresh_menu_editor(LVINFO_TOUCH_WB);
+            }
+            else
+            {
+                /* Left column: Kelvin (disabled while AWB is on). */
+                if (lens_info.wb_mode != WB_AUTO)
+                    kelvin_toggle((void *)-1, sign);
+                slim_touch_lv_refresh_menu_editor(LVINFO_TOUCH_WB);
+            }
             break;
         case LVINFO_TOUCH_CROP:
             deferred = 1;
@@ -279,7 +323,7 @@ static int slim_touch_lv_direct_editor(struct event * event)
     slim_touch_tap_count = 0;
     slim_touch_tap_deadline = 0;
     if (field == LVINFO_TOUCH_CROP || field == LVINFO_TOUCH_FPS ||
-        field == LVINFO_TOUCH_BIT_DEPTH)
+        field == LVINFO_TOUCH_BIT_DEPTH || field == LVINFO_TOUCH_WB)
         delayed_call(20, slim_touch_lv_refresh_menu_editor_delayed, 0);
     return 1;
 }

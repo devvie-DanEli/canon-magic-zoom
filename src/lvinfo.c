@@ -143,8 +143,10 @@ static void lvinfo_touch_draw_editor(void)
 
     int value_y = LVINFO_TOUCH_VALUE_Y;
 
-    if (lvinfo_touch_field == LVINFO_TOUCH_CROP)
+    if (lvinfo_touch_field == LVINFO_TOUCH_CROP ||
+        lvinfo_touch_field == LVINFO_TOUCH_WB)
     {
+        /* Two columns: Crop uses mode/resolution; WB uses Kelvin + AWB. */
         bmp_fill(COLOR_BLACK, LVINFO_TOUCH_CROP_X, LVINFO_TOUCH_BOX_Y,
                  LVINFO_TOUCH_CROP_W, LVINFO_TOUCH_BOX_H);
         lvinfo_touch_draw_value(0, 232, value_y, lvinfo_touch_menu_value[0],
@@ -885,21 +887,22 @@ int lvinfo_touch_editor_hit_test(int x, int y, int *slot, int *sign)
     if (lvinfo_touch_field == LVINFO_TOUCH_NONE)
         return 0;
 
-    box_x = lvinfo_touch_field == LVINFO_TOUCH_CROP
-        ? LVINFO_TOUCH_CROP_X : LVINFO_TOUCH_SINGLE_X;
-    box_w = lvinfo_touch_field == LVINFO_TOUCH_CROP
-        ? LVINFO_TOUCH_CROP_W : LVINFO_TOUCH_SINGLE_W;
-    if (x < box_x || x >= box_x + box_w ||
-        y < LVINFO_TOUCH_BOX_Y || y >= LVINFO_TOUCH_BOX_Y + LVINFO_TOUCH_BOX_H)
-        return 0;
+    {
+        int dual = (lvinfo_touch_field == LVINFO_TOUCH_CROP ||
+                    lvinfo_touch_field == LVINFO_TOUCH_WB);
+        box_x = dual ? LVINFO_TOUCH_CROP_X : LVINFO_TOUCH_SINGLE_X;
+        box_w = dual ? LVINFO_TOUCH_CROP_W : LVINFO_TOUCH_SINGLE_W;
+        if (x < box_x || x >= box_x + box_w ||
+            y < LVINFO_TOUCH_BOX_Y || y >= LVINFO_TOUCH_BOX_Y + LVINFO_TOUCH_BOX_H)
+            return 0;
 
-    if (lvinfo_touch_field == LVINFO_TOUCH_CROP)
-        *slot = x < LVINFO_TOUCH_CROP_X + LVINFO_TOUCH_CROP_W / 2 ? 0 : 1;
-    else
-        *slot = 0;
+        if (dual)
+            *slot = x < LVINFO_TOUCH_CROP_X + LVINFO_TOUCH_CROP_W / 2 ? 0 : 1;
+        else
+            *slot = 0;
 
-    arrow_cx = lvinfo_touch_field == LVINFO_TOUCH_CROP
-        ? (*slot == 0 ? 232 : 488) : 360;
+        arrow_cx = dual ? (*slot == 0 ? 232 : 488) : 360;
+    }
     arrow_left = arrow_cx - 65;
     arrow_right = arrow_cx + 65;
 

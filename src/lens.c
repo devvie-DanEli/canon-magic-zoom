@@ -1663,6 +1663,15 @@ lens_set_kelvin(int k)
 }
 
 void
+
+void lens_set_wb_mode(int mode)
+{
+    mode = COERCE(mode, 0, 9);
+    prop_request_change(PROP_WB_MODE_LV, &mode, 4);
+    prop_request_change(PROP_WB_MODE_PH, &mode, 4);
+    msleep(20);
+}
+
 lens_set_kelvin_value_only(int k)
 {
     k = COERCE(k, KELVIN_MIN, KELVIN_MAX);

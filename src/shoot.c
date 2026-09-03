@@ -1958,6 +1958,10 @@ aperture_toggle( void* priv, int sign)
 
 void kelvin_toggle( void* priv, int sign )
 {
+    /* Manual Kelvin is locked while Auto White Balance is active. */
+    if (lens_info.wb_mode == WB_AUTO)
+        return;
+
     int k;
     switch (lens_info.wb_mode)
     {
@@ -1987,7 +1991,14 @@ PROP_INT( PROP_WB_KELVIN_PH, wb_kelvin_ph );
 
 static MENU_UPDATE_FUNC(kelvin_display)
 {
-    if (lens_info.wb_mode == WB_KELVIN)
+    if (lens_info.wb_mode == WB_AUTO)
+    {
+        MENU_SET_VALUE("AWB");
+        MENU_SET_ENABLED(0);
+        MENU_SET_ICON(MNI_AUTO, 0);
+        MENU_SET_WARNING(MENU_WARN_NOT_WORKING, "Turn AWB off to adjust Kelvin white balance.");
+    }
+    else if (lens_info.wb_mode == WB_KELVIN)
     {
         MENU_SET_VALUE(
             "%dK",
@@ -2018,6 +2029,9 @@ static MENU_UPDATE_FUNC(kelvin_display)
 static MENU_UPDATE_FUNC(kelvin_wbs_display)
 {
     kelvin_display(entry, info);
+
+    if (lens_info.wb_mode == WB_AUTO)
+        MENU_SET_ENABLED(0);
 
 #ifdef CONFIG_SLIM_MENUS
     /* Expo White Balance parent: hide left meter icon (reads as a blue/cyan box). */
@@ -4327,8 +4341,47 @@ extern MENU_UPDATE_FUNC(digic_black_print);
 
 extern int digic_shadow_lift;
 
+/* AWB (Auto White Balance): uses Canon's WB_AUTO mode. When ON, manual
+ * Kelvin white balance is grayed out in Expo and LiveView. */
+static void awb_toggle(void *priv, int delta)
+{
+    (void)priv;
+    if (delta == 0)
+        return;
+    if (lens_info.wb_mode == WB_AUTO)
+    {
+        /* Restore last Kelvin (or a sensible default). */
+        int k = lens_info.kelvin;
+        if (k < KELVIN_MIN || k > KELVIN_MAX)
+            k = 5500;
+        lens_set_kelvin(k);
+    }
+    else
+    {
+        lens_set_wb_mode(WB_AUTO);
+    }
+}
+
+static MENU_UPDATE_FUNC(awb_display)
+{
+    int on = (lens_info.wb_mode == WB_AUTO);
+    MENU_SET_VALUE("%s", on ? "ON" : "OFF");
+    MENU_SET_ENABLED(on);
+}
+
 static struct menu_entry expo_menus[] = {
     #ifdef FEATURE_WHITE_BALANCE
+    {
+        .name = "AWB",
+        .select = awb_toggle,
+        .update = awb_display,
+        .max = 1,
+        .icon_type = IT_BOOL,
+        .choices = CHOICES("OFF", "ON"),
+        .edit_mode = EM_INLINE_ADJUST,
+        .help = "Auto White Balance. When ON, manual White Balance is grayed out.",
+        .help2 = "Same AWB state as LiveView White Balance editor.",
+    },
     {
         .name = "White Balance",
         .update    = kelvin_wbs_display,
