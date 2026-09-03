@@ -2430,15 +2430,19 @@ static void preview_contrast_n_saturation_step()
      * temporarily force Edge Image for the live render only -- the saved
      * menu value (preview_peaking) is never touched, so this reverts on
      * its own the moment Dual ISO turns off.
-     * Skipped while "Kill FP (Dual ISO Rec)" is actively suppressing
-     * peaking during recording -- that switch should win, not get
-     * overridden back on every frame by Auto Edge. */
+     * "Kill FP (Dual ISO Rec)" takes priority over both the saved menu
+     * value and Auto Edge: while it's actively suppressing peaking during
+     * Dual ISO recording, DIGIC peaking is forced off outright, regardless
+     * of how preview_peaking was set. */
     extern int focus_peaking_killed_by_dual_iso_rec(); /* zebra.c */
     int digic_peak_effective = preview_peaking;
-    if (digic_peak_auto_edge_on_dualiso &&
+    if (focus_peaking_killed_by_dual_iso_rec())
+    {
+        digic_peak_effective = 0;
+    }
+    else if (digic_peak_auto_edge_on_dualiso &&
         dual_iso_is_active && dual_iso_is_active() &&
-        !preview_peaking_force_normal_image &&
-        !focus_peaking_killed_by_dual_iso_rec())
+        !preview_peaking_force_normal_image)
     {
         digic_peak_effective = 2;
     }

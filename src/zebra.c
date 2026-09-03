@@ -3409,7 +3409,6 @@ struct menu_entry zebra_menus[] = {
         .max = 1,
         .help = "Zoom box for checking focus. Can be used while recording.",
         .submenu_width = 650,
-        .depends_on = DEP_GLOBAL_DRAW | DEP_LIVEVIEW,
         .children =  (struct menu_entry[]) {
             {
                 .name = "Trigger mode",
