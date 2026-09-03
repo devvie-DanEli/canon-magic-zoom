@@ -326,37 +326,41 @@ int nondigic_zoom_overlay_enabled()
         should_draw_zoom_overlay();
 }
 
-/* Dual ISO status: dual_iso.h WEAK_FUNC (0 if module not loaded). */
+/* Dual ISO status must come from the loaded module via MODULE_FUNCTION.
+ * Calling dual_iso_is_enabled() from dual_iso.h only hits the weak ret_0 stub
+ * (or can mis-resolve) and is not reliable for kill gating. */
 
 static CONFIG_INT("kill.zebra.dualiso.rec", kill_zebra_dual_iso_rec, 0);
 static CONFIG_INT("kill.fp.dualiso.rec", kill_fp_dual_iso_rec, 0);
 
-/* Auto Edge (tweaks.c) also hides software overlays so Edge Image is clean. */
-extern int digic_auto_edge_should_hide_software_overlays(void);
+static int (*dual_iso_enabled_fn)(void) = MODULE_FUNCTION(dual_iso_is_enabled);
 
-/* True only while Dual ISO is ON in the menu AND we are recording.
- * Do not use dual_iso_is_active() alone — it can be true outside Dual ISO
- * recording and caused KILL FP/Zebras to fire on normal rec. */
+/* Dual ISO menu ON (isoless_hdr), via module. 0 if module missing. */
+static int dual_iso_menu_is_on(void)
+{
+    if (!dual_iso_enabled_fn)
+        return 0;
+    return dual_iso_enabled_fn() ? 1 : 0;
+}
+
+/* True only while Dual ISO menu is ON AND we are recording (H.264 or RAW). */
 static int dual_iso_rec_context(void)
 {
-    /* RAW rec sets CUSTOM_RECORDING; H.264 sets __recording. Either counts. */
     if (!RECORDING && !RECORDING_RAW)
         return 0;
-    /* Menu Dual ISO must be enabled. */
-    if (!dual_iso_is_enabled())
+    if (!dual_iso_menu_is_on())
         return 0;
     return 1;
 }
 
-static int dual_iso_currently_enabled()
+static int dual_iso_currently_enabled(void)
 {
-    return dual_iso_is_enabled() ? 1 : 0;
+    return dual_iso_menu_is_on();
 }
 
-static int zebra_killed_by_dual_iso_rec()
+static int zebra_killed_by_dual_iso_rec(void)
 {
-    /* KILL Zebras only: Dual ISO recording + option ON.
-     * Auto Edge must not hide zebras (it only switches Digic to Edge Image). */
+    /* KILL Zebras: option ON + Dual ISO ON + recording. Nothing else. */
     if (!kill_zebra_dual_iso_rec)
         return 0;
     if (!dual_iso_rec_context())
@@ -364,10 +368,9 @@ static int zebra_killed_by_dual_iso_rec()
     return 1;
 }
 
-int focus_peaking_killed_by_dual_iso_rec()
+int focus_peaking_killed_by_dual_iso_rec(void)
 {
-    /* KILL FP only: Dual ISO recording + option ON.
-     * Auto Edge must not hide red peaking dots. */
+    /* KILL FP: option ON + Dual ISO ON + recording. Nothing else. */
     if (!kill_fp_dual_iso_rec)
         return 0;
     if (!dual_iso_rec_context())
