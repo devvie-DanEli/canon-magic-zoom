@@ -205,7 +205,12 @@ static CONFIG_INT( "zebra.raw.under", zebra_raw_underexposure,  1 );
 #define MZ_TAKEOVER_ZOOM_IN_BTN 3
 #define MZ_ALWAYS_ON            4
 static CONFIG_INT( "zoom.overlay", zoom_overlay_enabled, 0);
+#ifdef CONFIG_EOSM
+/* EOS M has no reliable zoom-in button; default Always On so Magic Zoom works. */
+static CONFIG_INT( "zoom.overlay.trig", zoom_overlay_trigger_mode, MZ_ALWAYS_ON);
+#else
 static CONFIG_INT( "zoom.overlay.trig", zoom_overlay_trigger_mode, MZ_TAKEOVER_ZOOM_IN_BTN);
+#endif
 static CONFIG_INT( "zoom.overlay.size", zoom_overlay_size, 1);
 static CONFIG_INT( "zoom.overlay.x", zoom_overlay_x, 1);
 #ifdef CONFIG_5D3
@@ -310,29 +315,49 @@ int nondigic_zoom_overlay_enabled()
 }
 
 /* used to detect whether Dual ISO is currently enabled, without
- * hard-linking against the dual_iso module (it may not be loaded) */
-static int (*dual_iso_is_enabled_fn)() = MODULE_FUNCTION(dual_iso_is_enabled);
+ * hard-linking against the dual_iso module (it may not be loaded).
+ * MODULE_FUNCTION requires the pointer variable name to match the
+ * symbol name so the module loader can fill it in. */
+static int (*dual_iso_is_enabled)() = MODULE_FUNCTION(dual_iso_is_enabled);
+static int (*dual_iso_is_active)() = MODULE_FUNCTION(dual_iso_is_active);
 
-/* "KILL FP/Zebras (Dual ISO Rec)": while recording, if Dual ISO is
- * enabled, temporarily hide focus peaking / zebras; restore them
- * automatically once recording stops. Has no effect if Dual ISO
- * is off. These are independent from each other. */
+/* "KILL FP/Zebras (Dual ISO Rec)": while Dual ISO is active (menu on
+ * and/or actively applied while recording), temporarily hide software
+ * focus peaking dots and/or zebras. Digic Auto Edge is handled in
+ * tweaks.c via focus_peaking_killed_by_dual_iso_rec(). */
 static CONFIG_INT("kill.zebra.dualiso.rec", kill_zebra_dual_iso_rec, 0);
 static CONFIG_INT("kill.fp.dualiso.rec", kill_fp_dual_iso_rec, 0);
 
 static int dual_iso_currently_enabled()
 {
-    return dual_iso_is_enabled_fn && dual_iso_is_enabled_fn();
+    if (dual_iso_is_active && dual_iso_is_active())
+        return 1;
+    if (dual_iso_is_enabled && dual_iso_is_enabled())
+        return 1;
+    return 0;
+}
+
+static int dual_iso_kill_context()
+{
+    /* Hide overlays while Dual ISO is on and we are recording, OR when
+     * Dual ISO is actively applied (enabled_lv during RAW rec). */
+    if (!dual_iso_currently_enabled())
+        return 0;
+    if (RECORDING)
+        return 1;
+    if (dual_iso_is_active && dual_iso_is_active())
+        return 1;
+    return 0;
 }
 
 static int zebra_killed_by_dual_iso_rec()
 {
-    return kill_zebra_dual_iso_rec && RECORDING && dual_iso_currently_enabled();
+    return kill_zebra_dual_iso_rec && dual_iso_kill_context();
 }
 
 int focus_peaking_killed_by_dual_iso_rec()
 {
-    return kill_fp_dual_iso_rec && RECORDING && dual_iso_currently_enabled();
+    return kill_fp_dual_iso_rec && dual_iso_kill_context();
 }
 
 static CONFIG_INT( "focus.peaking", focus_peaking, 0);
@@ -2165,6 +2190,24 @@ draw_zebra_and_focus( int Z, int F )
     uint8_t * const bvram = bmp_vram_real();
     if (unlikely(!bvram)) return 0;
     if (unlikely(!bvram_mirror)) return 0;
+
+    /* When kill FP/zebras engages, clear leftover software peaking dots so
+     * they do not freeze on screen while Digic Edge Image takes over. */
+    {
+        static int prev_fp_kill = 0;
+        static int prev_zb_kill = 0;
+        int fk = focus_peaking_killed_by_dual_iso_rec() ? 1 : 0;
+        int zk = zebra_killed_by_dual_iso_rec() ? 1 : 0;
+        if ((fk && !prev_fp_kill) || (zk && !prev_zb_kill))
+        {
+#ifdef FEATURE_FOCUS_PEAK
+            dirty_pixels_num = 0;
+#endif
+            bvram_mirror_clear();
+        }
+        prev_fp_kill = fk;
+        prev_zb_kill = zk;
+    }
     
     #ifdef FEATURE_ZEBRA
     draw_zebras(Z);
@@ -2388,7 +2431,7 @@ static MENU_UPDATE_FUNC(kill_zebra_dualiso_rec_display)
     MENU_SET_VALUE("%s", CURRENT_VALUE ? "ON" : "OFF");
     if (CURRENT_VALUE)
     {
-        if (!dual_iso_is_enabled_fn)
+        if (!dual_iso_is_enabled)
             MENU_SET_WARNING(MENU_WARN_ADVICE, "Dual ISO module is not loaded.");
         else if (!dual_iso_currently_enabled())
             MENU_SET_WARNING(MENU_WARN_INFO, "No effect: Dual ISO is currently off.");
@@ -2404,7 +2447,7 @@ static MENU_UPDATE_FUNC(kill_fp_dualiso_rec_display)
     MENU_SET_VALUE("%s", CURRENT_VALUE ? "ON" : "OFF");
     if (CURRENT_VALUE)
     {
-        if (!dual_iso_is_enabled_fn)
+        if (!dual_iso_is_enabled)
             MENU_SET_WARNING(MENU_WARN_ADVICE, "Dual ISO module is not loaded.");
         else if (!dual_iso_currently_enabled())
             MENU_SET_WARNING(MENU_WARN_INFO, "No effect: Dual ISO is currently off.");
@@ -3291,9 +3334,9 @@ struct menu_entry zebra_menus[] = {
         .choices = CHOICES("OFF", "ON"),
         .update     = kill_zebra_dualiso_rec_display,
         .edit_mode = EM_INLINE_ADJUST,
-        .help = "Auto-hide zebras while recording, if Dual ISO is enabled.",
-        .help2 = "Zebras come back automatically once recording stops.\n"
-                 "No effect if Dual ISO is off. Independent from the FP option.",
+        .help = "Hide zebras while Dual ISO is active/recording.",
+        .help2 = "Also applies when Dual ISO is actively applied (RAW rec).\n"
+                 "Independent from KILL FP. Restores when Dual ISO/rec ends.",
     },
     #endif
 
@@ -3306,9 +3349,9 @@ struct menu_entry zebra_menus[] = {
         .choices = CHOICES("OFF", "ON"),
         .update     = kill_fp_dualiso_rec_display,
         .edit_mode = EM_INLINE_ADJUST,
-        .help = "Auto-hide focus peaking while recording, if Dual ISO is enabled.",
-        .help2 = "Focus peak comes back automatically once recording stops.\n"
-                 "No effect if Dual ISO is off. Independent from the Zebras option.",
+        .help = "Hide software focus peaking (red dots) while Dual ISO is active/recording.",
+        .help2 = "Works with Auto Edge: hides dots so Digic Edge Image is clean.\n"
+                 "Also forces Digic peaking off via the same kill signal. Independent from KILL Zebras.",
     },
     #endif
 
@@ -3407,34 +3450,44 @@ struct menu_entry zebra_menus[] = {
         .update = zoom_overlay_display,
         .min = 0,
         .max = 1,
-        .help = "Zoom box for checking focus. Can be used while recording.",
+        .icon_type = IT_BOOL,
+        .choices = CHOICES("OFF", "ON"),
+        .edit_mode = EM_INLINE_ADJUST,
+        .help = "Zoom box for checking focus. SET opens options. Dial toggles ON/OFF.",
+        .help2 = "Can be used while recording. Prefer Always On or Half-shutter on EOS M.",
+        .depends_on = DEP_GLOBAL_DRAW,
+        .works_best_in = DEP_LIVEVIEW,
         .submenu_width = 650,
         .children =  (struct menu_entry[]) {
             {
                 .name = "Trigger mode",
                 .priv = &zoom_overlay_trigger_mode, 
                 .min = 1,
+#ifdef CONFIG_ZOOM_BTN_NOT_WORKING_WHILE_RECORDING
                 .max = 4,
-                #ifdef CONFIG_ZOOM_BTN_NOT_WORKING_WHILE_RECORDING
-                .choices = (const char *[]) {"HalfShutter", "Focus Ring", "FocusR+HalfS", "Always On"},
-                .help = "Trigger Magic Zoom by focus ring or half-shutter.",
-                #else
+                .choices = (const char *[]) {"HalfShutter", "Focus+HS", "ZoomIn (+)", "Always On"},
+                .help = "Trigger Magic Zoom by half-shutter, focus ring, zoom, or always on.",
+#else
+                .max = 4,
                 .choices = (const char *[]) {"Zoom.REC", "Focus+ZREC", "ZoomIn (+)", "Always On"},
-                .help = "Zoom when recording / trigger from focus ring / Zoom button",
-                #endif
+                .help = "Zoom when recording / focus ring / Zoom button / Always On",
+#endif
+                .edit_mode = EM_INLINE_ADJUST,
+                .icon_type = IT_DICE,
             },
             {
                 .name = "Size", 
                 .priv = &zoom_overlay_size,
-                #ifdef FEATURE_MAGIC_ZOOM_FULL_SCREEN // most new cameras can do fullscreen :)
+#ifdef FEATURE_MAGIC_ZOOM_FULL_SCREEN
                 .max = 3,
                 .help = "Size of zoom box (small / medium / large / full screen).",
-                #else // old cameras - simple zoom box
+#else
                 .max = 2,
                 .help = "Size of zoom box (small / medium / large).",
-                #endif
+#endif
                 .choices = (const char *[]) {"Small", "Medium", "Large", "FullScreen"},
                 .icon_type = IT_SIZE,
+                .edit_mode = EM_INLINE_ADJUST,
             },
             {
                 .name = "Position", 
@@ -3443,16 +3496,18 @@ struct menu_entry zebra_menus[] = {
                 .choices = (const char *[]) {"Focus box", "Top-Left", "Top-Right", "Bottom-Right", "Bottom-Left"},
                 .icon_type = IT_DICE,
                 .help = "Position of zoom box (fixed or linked to focus box).",
+                .edit_mode = EM_INLINE_ADJUST,
             },
             {
                 .name = "Magnification", 
                 .priv = &zoom_overlay_x,
                 .max = 2,
-                .choices = (const char *[]) {"1:1", "2:1", "3:1", "4:1"},
+                .choices = (const char *[]) {"1:1", "2:1", "3:1"},
                 .icon_type = IT_SIZE,
                 .help = "1:1 displays recorded pixels, 2:1 displays them doubled.",
+                .edit_mode = EM_INLINE_ADJUST,
             },
-            #ifdef CONFIG_LV_FOCUS_INFO
+#ifdef CONFIG_LV_FOCUS_INFO
             {
                 .name = "Focus confirm", 
                 .priv = &zoom_overlay_split,
@@ -3460,15 +3515,9 @@ struct menu_entry zebra_menus[] = {
                 .choices = (const char *[]) {"Green Bars", "SplitScreen", "SS ZeroCross"},
                 .icon_type = IT_DICE,
                 .help = "How to show focus confirmation (green bars / split screen).",
+                .edit_mode = EM_INLINE_ADJUST,
             },
-            #endif
-            /*{
-                .name = "Look-up Table", 
-                .priv = &zoom_overlay_lut,
-                .max = 1,
-                .choices = (const char *[]) {"OFF", "CineStyle"},
-                .help = "LUT for increasing contrast in the zoom box.",
-            },*/
+#endif
             MENU_EOL
         },
     },
@@ -4627,6 +4676,7 @@ int is_focus_peaking_enabled()
 #ifdef FEATURE_FOCUS_PEAK
     return
         focus_peaking &&
+        !focus_peaking_killed_by_dual_iso_rec() &&
         (lv || (QR_MODE && ZEBRAS_IN_QUICKREVIEW))
         && get_global_draw()
         && !should_draw_zoom_overlay()
