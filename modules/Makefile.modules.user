@@ -10,5 +10,4 @@ ML_MODULES = \
 	mlv_snd \
 	sd_uhs \
 	file_man \
-	bench \
-	ph_touch
+	bench
