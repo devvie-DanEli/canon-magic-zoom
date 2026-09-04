@@ -214,14 +214,14 @@ static struct menu_entry auto_iso_menu[] = {
     },
 };
 
-static void auto_iso_menu_init(void *unused)
+static unsigned int auto_iso_init(void)
 {
-    (void)unused;
     if (!auto_iso_supported())
-        return;
+        return 0;
 
     auto_iso_apply_limit();
     menu_add("Expo", auto_iso_menu, COUNT(auto_iso_menu));
+    return 0;
 }
 
 static void auto_iso_dual_vsync(void)
@@ -259,8 +259,16 @@ static unsigned int auto_iso_vsync_cbr(unsigned int unused)
     return CBR_RET_CONTINUE;
 }
 
-MODULE_CBRS_START();
-MODULE_CBR(CBR_VSYNC, auto_iso_vsync_cbr, 0);
-MODULE_CBRS_END();
+MODULE_INFO_START()
+    MODULE_INIT(auto_iso_init)
+MODULE_INFO_END()
 
-INIT_FUNC("auto_iso", auto_iso_menu_init);
+MODULE_CBRS_START()
+    MODULE_CBR(CBR_VSYNC, auto_iso_vsync_cbr, 0)
+MODULE_CBRS_END()
+
+MODULE_CONFIGS_START()
+    MODULE_CONFIG(eosm_auto_iso_enabled_config)
+    MODULE_CONFIG(eosm_auto_iso_max_index)
+    MODULE_CONFIG(eosm_auto_iso_last_manual_raw)
+MODULE_CONFIGS_END()
