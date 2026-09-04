@@ -11,18 +11,22 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      - name: Check out the repo
+      - name: Check out photo-touch-profiles base (working sources)
         uses: actions/checkout@v4
+        with:
+          ref: feature/eosm-photo-touch-profiles
 
-      - name: Restore sources from photo-touch-profiles base
+      - name: Overlay auto-iso branch modules and configs
         run: |
           set -euo pipefail
-          BASE=https://raw.githubusercontent.com/devvie-DanEli/canon-magic-zoom/feature/eosm-photo-touch-profiles
-          for f in src/gui-common.c src/Makefile.src; do
-            echo "Fetching $f"
-            curl -fsSL "$BASE/$f" -o "$f"
-            wc -c "$f"
-          done
+          git fetch origin feature/eosm-auto-iso
+          if git show origin/feature/eosm-auto-iso:modules/photoctl/photoctl.c > /tmp/photoctl.c 2>/dev/null; then
+            if [ "$(wc -c < /tmp/photoctl.c)" -gt 1000 ]; then
+              mkdir -p modules/photoctl
+              cp /tmp/photoctl.c modules/photoctl/photoctl.c
+              echo "Using photoctl from feature/eosm-auto-iso"
+            fi
+          fi
 
       - name: Install Python 2 + Python 3 Docutils
         run: |
@@ -107,21 +111,75 @@ jobs:
               '            /* Tap gestures (including Quick Panel) only originate from the\n',
               'Photo-mode no-fallthrough gate'
           )
+
+          replace_once(
+              'src/gui-common.c',
+              '        if (slim_touch_lv_context_ok())\n'
+              '        {\n'
+              '            /* Keep the existing simultaneous two-finger Last Settings shortcut. */\n'
+              '            gui_open_last_menu_selection();\n'
+              '            return 0;\n'
+              '        }\n',
+              '        if (slim_touch_lv_context_ok() && is_movie_mode())\n'
+              '        {\n'
+              '            /* Keep the existing simultaneous two-finger Last Settings shortcut. */\n'
+              '            gui_open_last_menu_selection();\n'
+              '            return 0;\n'
+              '        }\n',
+              'Movie-only two-finger Last Settings'
+          )
+
+          replace_once(
+              'src/gui-common.c',
+              'static void slim_touch_open_for_taps(int taps)\n'
+              '{\n'
+              '    if (!slim_touch_lv_context_ok() || lvinfo_touch_editor_is_open())\n'
+              '        return;\n',
+              'static void slim_touch_open_for_taps(int taps)\n'
+              '{\n'
+              '    if (!slim_touch_lv_context_ok() || !is_movie_mode() ||\n'
+              '        lvinfo_touch_editor_is_open())\n'
+              '        return;\n',
+              'Movie-only tap/menu open'
+          )
           print('Touch routing patches applied')
           PY
 
-      - name: Build EOS M platform
+      - name: Cache ARM toolchain
+        id: cache-toolchain
+        uses: actions/cache@v4
+        with:
+          path: ~/gcc-arm-none-eabi-5_4-2016q3
+          key: arm-toolchain-5_4-2016q3
+
+      - name: Download ARM toolchain
+        if: steps.cache-toolchain.outputs.cache-hit != 'true'
+        run: |
+          cd ~
+          wget -q https://launchpad.net/gcc-arm-embedded/5.0/5-2016-q3-update/+download/gcc-arm-none-eabi-5_4-2016q3-20160926-linux.tar.bz2
+          tar xjf gcc-arm-none-eabi-5_4-2016q3-20160926-linux.tar.bz2
+
+      - name: Add toolchain to PATH
+        run: echo "$HOME/gcc-arm-none-eabi-5_4-2016q3/bin" >> "$GITHUB_PATH"
+
+      - name: Check compiler
+        run: arm-none-eabi-gcc --version
+
+      - name: Build EOS M platform + modules + package zip
+        run: make -C platform/EOSM.202 zip SHELL=/bin/bash
+
+      - name: Verify build outputs
         run: |
           set -euo pipefail
-          cd platform/EOSM.202
-          make -j$(nproc) 2>&1 | tee /tmp/build.log
+          ls -la platform/EOSM.202/*.bin platform/EOSM.202/*.zip 2>/dev/null || true
+          test -f platform/EOSM.202/autoexec.bin
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: eosm-auto-iso-build
           path: |
-            platform/EOSM.202/*.bin
+            platform/EOSM.202/autoexec.bin
+            platform/EOSM.202/*.zip
             platform/EOSM.202/*.sym
-            modules/**/*.mo
           if-no-files-found: warn
