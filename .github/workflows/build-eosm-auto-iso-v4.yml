@@ -1,5 +1,5 @@
 name: Build EOS M - Auto ISO v4
-run-name: Build EOS M - Auto ISO v4
+run-name: Build EOS M (Auto ISO disabled)
 
 on:
   push:
@@ -31,21 +31,15 @@ jobs:
             fi
           done
 
-      - name: Enable Auto ISO module for EOS M autoload
+      - name: Ensure photoctl autoload (Auto ISO intentionally not loaded)
         run: |
           set -euo pipefail
+          # Auto ISO is disabled: do not add "auto_iso" to core_modules.
           grep -q '"photoctl"' src/module.c || sed -i 's/"hdmi_out"};/"hdmi_out", "photoctl"};/' src/module.c
-          grep -q '"auto_iso"' src/module.c || sed -i 's/"photoctl"};/"photoctl", "auto_iso"};/' src/module.c
-          grep 'core_modules' src/module.c
-
-      - name: Repair and validate Auto ISO patch helper
-        run: |
-          set -euo pipefail
-          sed -i "/^'$/d" tools/apply_eosm_auto_iso_v3.py
-          python2 -m py_compile tools/apply_eosm_auto_iso_v3.py
-
-      - name: Apply EOS M Auto ISO + stable touch/lifecycle integration
-        run: python2 tools/apply_eosm_auto_iso_v3.py
+          # Strip auto_iso from autoload list if a prior patch re-added it.
+          sed -i 's/, "auto_iso"//' src/module.c
+          sed -i 's/"auto_iso", //' src/module.c
+          grep 'core_modules' src/module.c || true
 
       - name: Cache ARM toolchain
         id: cache-toolchain
@@ -70,14 +64,19 @@ jobs:
       - name: Build EOS M platform + modules + package zip
         run: make -C platform/EOSM.202 zip SHELL=/bin/bash
 
-      - name: Verify Auto ISO exports and package
+      - name: Verify package (Auto ISO excluded)
         run: |
           set -euo pipefail
-          test -s modules/auto_iso/auto_iso.sym
-          grep -E 'eosm_auto_iso_|auto_iso' modules/auto_iso/auto_iso.sym
           ls -lh platform/EOSM.202/autoexec.bin
           zipfile=$(ls platform/EOSM.202/magiclantern-*.zip)
-          for mod in auto_iso.mo crop_rec.mo dual_iso.mo hdmi_out.mo mlv_lite.mo mlv_play.mo mlv_snd.mo sd_uhs.mo file_man.mo bench.mo photoctl.mo; do
+          echo "Package: $zipfile"
+          # auto_iso.mo must NOT be present
+          if unzip -l "$zipfile" | grep -q 'auto_iso.mo'; then
+            echo "ERROR: auto_iso.mo should not be in the package (feature disabled)"
+            exit 1
+          fi
+          echo "OK: auto_iso.mo absent"
+          for mod in crop_rec.mo dual_iso.mo hdmi_out.mo mlv_lite.mo mlv_play.mo mlv_snd.mo sd_uhs.mo file_man.mo bench.mo photoctl.mo; do
             unzip -l "$zipfile" | grep -q "$mod"
             echo "OK: $mod"
           done
@@ -85,13 +84,13 @@ jobs:
       - name: Upload autoexec.bin
         uses: actions/upload-artifact@v4
         with:
-          name: autoexec-auto-iso-v4.bin
+          name: autoexec-eosm.bin
           path: platform/EOSM.202/autoexec.bin
           if-no-files-found: error
 
       - name: Upload full Magic Lantern zip
         uses: actions/upload-artifact@v4
         with:
-          name: magiclantern-eosm-auto-iso-v4-zip
+          name: magiclantern-eosm-zip
           path: platform/EOSM.202/magiclantern-*.zip
           if-no-files-found: error
