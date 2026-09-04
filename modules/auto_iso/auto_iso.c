@@ -11,12 +11,8 @@
 #ifdef CONFIG_EOSM
 
 #define AUTO_ISO_MAX_CHOICES 5
-static const uint8_t auto_iso_max_raw[AUTO_ISO_MAX_CHOICES] = {
-    88, 96, 104, 112, 120
-};
-static const char *auto_iso_max_labels[AUTO_ISO_MAX_CHOICES] = {
-    "400", "800", "1600", "3200", "6400"
-};
+static const uint8_t auto_iso_max_raw[AUTO_ISO_MAX_CHOICES] = { 88, 96, 104, 112, 120 };
+static const char *auto_iso_max_labels[AUTO_ISO_MAX_CHOICES] = { "400", "800", "1600", "3200", "6400" };
 
 /* Auto ISO state and ceiling are deliberately independent of M1/M2/M3. */
 static CONFIG_INT("eosm.auto_iso", eosm_auto_iso_enabled_config, 0);
@@ -26,8 +22,7 @@ static CONFIG_INT("eosm.auto_iso.last_manual_iso", eosm_auto_iso_last_manual_raw
 static uint8_t auto_iso_range_min_raw = 72;
 static int dual_iso_prev = 0;
 
-static int (*dual_iso_is_enabled_fn)(void) =
-    MODULE_FUNCTION(dual_iso_is_enabled);
+static int (*dual_iso_is_enabled_fn)(void) = MODULE_FUNCTION(dual_iso_is_enabled);
 
 PROP_INT(PROP_ISO_AUTO, eosm_auto_iso_calculated_raw);
 
@@ -52,22 +47,19 @@ static int auto_iso_max_raw_value(void)
 
 static void auto_iso_apply_limit(void)
 {
-    if (!is_movie_mode())
-        return;
+    if (!is_movie_mode()) return;
 
     uint8_t range[2];
     range[0] = auto_iso_max_raw_value();
     range[1] = auto_iso_range_min_raw ? auto_iso_range_min_raw : 72;
-    if (range[0] < range[1])
-        range[0] = range[1];
+    if (range[0] < range[1]) range[0] = range[1];
     prop_request_change(PROP_AUTO_ISO_RANGE, range, 2);
 }
 
 static int auto_iso_last_manual(void)
 {
     int raw = eosm_auto_iso_last_manual_raw;
-    if (raw <= 0 || raw >= 255)
-        raw = 88;
+    if (raw <= 0 || raw >= 255) raw = 88;
     return raw;
 }
 
@@ -89,8 +81,7 @@ static void auto_iso_disable_and_restore_manual(void)
 
 static int auto_iso_set_enabled(int enabled)
 {
-    if (!is_movie_mode())
-        return 0;
+    if (!is_movie_mode()) return 0;
 
     if (auto_iso_dual_enabled())
     {
@@ -147,27 +138,22 @@ int eosm_auto_iso_set_from_touch(int sign)
         return 1;
     }
 
-    if (sign > 0)
-        auto_iso_set_enabled(1);
-    else if (sign < 0)
-        auto_iso_set_enabled(0);
+    if (sign > 0) auto_iso_set_enabled(1);
+    else if (sign < 0) auto_iso_set_enabled(0);
     return 1;
 }
 
 static LVINFO_UPDATE_FUNC(auto_iso_lv_update)
 {
     LVINFO_BUFFER(16);
-
     if (!is_movie_mode() || auto_iso_dual_enabled())
     {
         item->color_fg = COLOR_GRAY(50);
         snprintf(buffer, sizeof(buffer), "AUTO OFF");
         return;
     }
-
     item->color_fg = COLOR_WHITE;
-    snprintf(buffer, sizeof(buffer), "%s",
-             eosm_auto_iso_enabled_config ? "AUTO ON" : "AUTO OFF");
+    snprintf(buffer, sizeof(buffer), "%s", eosm_auto_iso_enabled_config ? "AUTO ON" : "AUTO OFF");
 }
 
 static struct lvinfo_item auto_iso_lv_item = {
@@ -185,8 +171,7 @@ static MENU_SELECT_FUNC(auto_iso_menu_toggle)
 
 static MENU_SELECT_FUNC(auto_iso_max_select)
 {
-    eosm_auto_iso_max_index = COERCE(eosm_auto_iso_max_index + sign,
-                                     0, AUTO_ISO_MAX_CHOICES - 1);
+    eosm_auto_iso_max_index = COERCE(eosm_auto_iso_max_index + sign, 0, AUTO_ISO_MAX_CHOICES - 1);
     auto_iso_apply_limit();
 }
 
@@ -198,7 +183,6 @@ static MENU_UPDATE_FUNC(auto_iso_menu_update)
         MENU_SET_VALUE("AUTO OFF");
         return;
     }
-
     MENU_SET_ENABLED(1);
     MENU_SET_VALUE(eosm_auto_iso_enabled_config ? "AUTO ON" : "AUTO OFF");
 }
@@ -219,6 +203,7 @@ static struct menu_entry auto_iso_menu[] = {
         .choices = CHOICES("AUTO OFF", "AUTO ON"),
         .select = auto_iso_menu_toggle,
         .update = auto_iso_menu_update,
+        /* SET opens the child submenu; left/right changes ON/OFF. */
         .edit_mode = EM_INLINE_ADJUST,
         .depends_on = DEP_LIVEVIEW | DEP_MOVIE_MODE,
         .children = (struct menu_entry[]) {
@@ -243,37 +228,30 @@ static struct menu_entry auto_iso_menu[] = {
 
 static void auto_iso_menu_init(void)
 {
-    if (is_movie_mode())
-        auto_iso_apply_limit();
+    if (is_movie_mode()) auto_iso_apply_limit();
     lvinfo_add_item(&auto_iso_lv_item);
     menu_add("Expo", auto_iso_menu, COUNT(auto_iso_menu));
 }
 
-static void auto_iso_dual_vsync(void);
+static void auto_iso_dual_vsync(void)
+{
+    if (!is_movie_mode()) return;
+    int dual = auto_iso_dual_enabled();
+    if (dual && !dual_iso_prev && eosm_auto_iso_enabled_config)
+        auto_iso_disable_and_restore_manual();
+    if (eosm_auto_iso_enabled_config && !dual)
+        auto_iso_apply_limit();
+    if (!eosm_auto_iso_enabled_config)
+        auto_iso_track_manual_iso();
+    dual_iso_prev = dual;
+}
+
+static void auto_iso_vsync_cbr(int unused);
 MODULE_CBR(CBR_VSYNC, auto_iso_vsync_cbr, 0);
 static void auto_iso_vsync_cbr(int unused)
 {
     (void)unused;
     auto_iso_dual_vsync();
-}
-
-static void auto_iso_dual_vsync(void)
-{
-    if (!is_movie_mode())
-        return;
-
-    int dual = auto_iso_dual_enabled();
-
-    if (dual && !dual_iso_prev && eosm_auto_iso_enabled_config)
-        auto_iso_disable_and_restore_manual();
-
-    if (eosm_auto_iso_enabled_config && !dual)
-        auto_iso_apply_limit();
-
-    if (!eosm_auto_iso_enabled_config)
-        auto_iso_track_manual_iso();
-
-    dual_iso_prev = dual;
 }
 
 #endif
