@@ -8,19 +8,44 @@
 #include <module.h>
 #include <shoot.h>
 
+/*
+ * EOS M Auto ISO
+ *
+ * The previous implementation only requested Canon's native Movie Auto ISO
+ * state (PROP_ISO == 0). On EOS M 2.0.2 that state can remain at one ISO
+ * value while recording RAW. We therefore calculate the ISO required by
+ * Canon's exposure meter and control ISO directly.
+ *
+ * Shutter and aperture remain user-controlled. ISO is the only parameter
+ * changed by this module.
+ */
+
 #define AUTO_ISO_MAX_CHOICES 5
 static const uint8_t auto_iso_max_raw[AUTO_ISO_MAX_CHOICES] = { 88, 96, 104, 112, 120 };
 static const char *auto_iso_max_labels[AUTO_ISO_MAX_CHOICES] = { "400", "800", "1600", "3200", "6400" };
+
+#define AUTO_ISO_MIN_RAW 72       /* ISO 100 */
+#define AUTO_ISO_TARGET_BV 0      /* zero = neutral exposure indication */
+#define AUTO_ISO_DEADBAND 2       /* 0.2 EV, in the 0.1-EV working scale */
+#define AUTO_ISO_UPDATE_TICKS 3   /* avoid hammering PROP_ISO every shoot-task tick */
+
+#define RAW2TV(raw) APEX_TV(raw) * 10 / 8
+#define RAW2AV(raw) APEX_AV(raw) * 10 / 8
+#define RAW2SV(raw) APEX_SV(raw) * 10 / 8
+#define RAW2EC(raw) raw * 10 / 8
+#define SV2RAW(apex) -APEX_SV(-(apex) * 100 / 125)
 
 /* Auto ISO state and ceiling are deliberately independent of M1/M2/M3. */
 static CONFIG_INT("eosm.auto_iso", eosm_auto_iso_enabled_config, 0);
 static CONFIG_INT("eosm.auto_iso.max", eosm_auto_iso_max_index, 4);
 static CONFIG_INT("eosm.auto_iso.last_manual_iso", eosm_auto_iso_last_manual_raw, 88);
 
-static uint8_t auto_iso_range_min_raw = 72;
 static int dual_iso_prev = 0;
 static int auto_iso_supported_cache = -1;
-static int auto_iso_last_applied_max = -1;
+static int auto_iso_running = 0;
+static int auto_iso_tick = 0;
+static int auto_iso_last_target_raw = -1;
+static int auto_iso_last_applied_raw = -1;
 
 static int (*dual_iso_is_enabled)(void) = MODULE_FUNCTION(dual_iso_is_enabled);
 
@@ -41,29 +66,10 @@ static int auto_iso_max_raw_value(void)
     return auto_iso_max_raw[COERCE(eosm_auto_iso_max_index, 0, AUTO_ISO_MAX_CHOICES - 1)];
 }
 
-static void auto_iso_apply_limit(void)
-{
-    if (!auto_iso_supported() || !is_movie_mode() || !eosm_auto_iso_enabled_config)
-        return;
-
-    int index = COERCE(eosm_auto_iso_max_index, 0, AUTO_ISO_MAX_CHOICES - 1);
-    if (index == auto_iso_last_applied_max)
-        return;
-
-    uint8_t range[2];
-    range[0] = auto_iso_max_raw_value();
-    range[1] = auto_iso_range_min_raw ? auto_iso_range_min_raw : 72;
-    if (range[0] < range[1])
-        range[0] = range[1];
-
-    prop_request_change_wait(PROP_AUTO_ISO_RANGE, range, 2, 100);
-    auto_iso_last_applied_max = index;
-}
-
 static int auto_iso_last_manual(void)
 {
     int raw = eosm_auto_iso_last_manual_raw;
-    if (raw <= 0 || raw >= 255)
+    if (raw < AUTO_ISO_MIN_RAW || raw > 120)
         raw = 88;
     return raw;
 }
@@ -74,46 +80,127 @@ static void auto_iso_track_manual_iso(void)
         eosm_auto_iso_last_manual_raw = lens_info.raw_iso;
 }
 
+static void auto_iso_reset_controller(void)
+{
+    auto_iso_tick = 0;
+    auto_iso_last_target_raw = -1;
+    auto_iso_last_applied_raw = -1;
+}
+
 static void auto_iso_disable_and_restore_manual(void)
 {
     if (lens_info.raw_iso)
         eosm_auto_iso_last_manual_raw = lens_info.raw_iso;
 
     eosm_auto_iso_enabled_config = 0;
+    auto_iso_reset_controller();
     lens_set_rawiso(auto_iso_last_manual());
-    auto_iso_last_applied_max = -1;
     lens_display_set_dirty();
 }
 
-static int auto_iso_set_enabled(int enabled)
+/*
+ * Return the ISO raw value that should produce neutral exposure with the
+ * current shutter/aperture and Canon's current exposure error indication.
+ *
+ * Magic Lantern's historical Auto Exposure module derives:
+ *     BV = TV + AV - SV + EC
+ * and uses get_ae_value() as the exposure-error term in M mode.
+ * Holding BV at zero with fixed TV and AV therefore gives:
+ *     SV = TV + AV + EC
+ */
+static int auto_iso_calculate_target_raw(void)
 {
+    if (!lens_info.raw_shutter || !lens_info.raw_aperture)
+        return lens_info.raw_iso ? lens_info.raw_iso : AUTO_ISO_MIN_RAW;
+
+    int ae_value = get_ae_value();
+    int sv = RAW2TV(lens_info.raw_shutter)
+           + RAW2AV(lens_info.raw_aperture)
+           + RAW2EC(ae_value);
+
+    int target_raw = SV2RAW(sv);
+    return target_raw;
+}
+
+static int auto_iso_choose_raw(int target_raw)
+{
+    int max_raw = auto_iso_max_raw_value();
+    target_raw = COERCE(target_raw, AUTO_ISO_MIN_RAW, max_raw);
+
+    /* Ignore tiny exposure-meter fluctuations to reduce ISO chatter. */
+    if (auto_iso_last_target_raw >= 0 &&
+        ABS(target_raw - auto_iso_last_target_raw) < AUTO_ISO_DEADBAND)
+    {
+        return auto_iso_last_applied_raw >= 0 ? auto_iso_last_applied_raw : target_raw;
+    }
+
+    return target_raw;
+}
+
+static void auto_iso_task(void *unused)
+{
+    (void)unused;
+    auto_iso_running = 1;
+
+    if (!auto_iso_supported() || !eosm_auto_iso_enabled_config ||
+        !is_movie_mode() || auto_iso_dual_enabled() ||
+        shooting_mode != SHOOTMODE_M || !lens_info.raw_shutter ||
+        !lens_info.raw_aperture)
+        goto cleanup;
+
+    int target_raw = auto_iso_calculate_target_raw();
+    int chosen_raw = auto_iso_choose_raw(target_raw);
+    int max_raw = auto_iso_max_raw_value();
+
+    /* Hard gain ceiling. Never allow the controller above the user's limit. */
+    chosen_raw = COERCE(chosen_raw, AUTO_ISO_MIN_RAW, max_raw);
+
+    auto_iso_last_target_raw = target_raw;
+
+    if (chosen_raw != auto_iso_last_applied_raw)
+    {
+        if (lens_set_rawiso(chosen_raw))
+            auto_iso_last_applied_raw = chosen_raw;
+        else
+            auto_iso_last_applied_raw = -1;
+    }
+
+cleanup:
+    auto_iso_running = 0;
+}
+
+static unsigned int auto_iso_shoot_task(unsigned int unused)
+{
+    (void)unused;
+
     if (!auto_iso_supported() || !is_movie_mode())
-        return 0;
+        return CBR_RET_CONTINUE;
+
+    if (!eosm_auto_iso_enabled_config)
+    {
+        auto_iso_track_manual_iso();
+        return CBR_RET_CONTINUE;
+    }
 
     if (auto_iso_dual_enabled())
     {
-        auto_iso_disable_and_restore_manual();
-        return 0;
+        if (!dual_iso_prev)
+            auto_iso_disable_and_restore_manual();
+        dual_iso_prev = 1;
+        return CBR_RET_CONTINUE;
     }
 
-    if (enabled)
-    {
-        auto_iso_track_manual_iso();
-        auto_iso_last_applied_max = -1;
-        eosm_auto_iso_enabled_config = 1;
-        auto_iso_apply_limit();
+    dual_iso_prev = 0;
 
-        /* Canon's native Movie Auto ISO state is PROP_ISO == 0. */
-        uint32_t auto_iso = 0;
-        prop_request_change_wait(PROP_ISO, &auto_iso, 4, 100);
-    }
-    else
-    {
-        auto_iso_disable_and_restore_manual();
-    }
+    /* Pace the controller. Shoot-task runs much faster than exposure needs to. */
+    if (++auto_iso_tick < AUTO_ISO_UPDATE_TICKS)
+        return CBR_RET_CONTINUE;
+    auto_iso_tick = 0;
 
-    lens_display_set_dirty();
-    return 1;
+    if (!auto_iso_running)
+        task_create("eosm_auto_iso", 0x1c, 0x1000, auto_iso_task, (void *)0);
+
+    return CBR_RET_CONTINUE;
 }
 
 int eosm_auto_iso_is_enabled(void)
@@ -163,6 +250,32 @@ int eosm_auto_iso_set_from_touch(int sign)
     return 1;
 }
 
+static int auto_iso_set_enabled(int enabled)
+{
+    if (!auto_iso_supported() || !is_movie_mode())
+        return 0;
+
+    if (auto_iso_dual_enabled())
+    {
+        auto_iso_disable_and_restore_manual();
+        return 0;
+    }
+
+    if (enabled)
+    {
+        auto_iso_track_manual_iso();
+        auto_iso_reset_controller();
+        eosm_auto_iso_enabled_config = 1;
+        lens_display_set_dirty();
+    }
+    else
+    {
+        auto_iso_disable_and_restore_manual();
+    }
+
+    return 1;
+}
+
 static MENU_SELECT_FUNC(auto_iso_menu_toggle)
 {
     auto_iso_set_enabled(!eosm_auto_iso_enabled_config);
@@ -185,10 +298,7 @@ static MENU_UPDATE_FUNC(auto_iso_max_update)
     int index = COERCE(eosm_auto_iso_max_index, 0, AUTO_ISO_MAX_CHOICES - 1);
     eosm_auto_iso_max_index = index;
     if (eosm_auto_iso_enabled_config)
-    {
-        auto_iso_last_applied_max = -1;
-        auto_iso_apply_limit();
-    }
+        auto_iso_reset_controller();
     MENU_SET_VALUE("%s", auto_iso_max_labels[index]);
 }
 
@@ -213,12 +323,12 @@ static struct menu_entry auto_iso_menu[] = {
                 .update = auto_iso_max_update,
                 .edit_mode = EM_INLINE_ADJUST,
                 .depends_on = DEP_LIVEVIEW | DEP_MOVIE_MODE,
-                .help = "Maximum ISO allowed by Auto ISO.",
+                .help = "Hard maximum gain limit for Auto ISO.",
             },
             MENU_EOL,
         },
-        .help = "Enable Canon Auto ISO in Movie mode.",
-        .help2 = "SET opens Auto ISO Max. Dual ISO disables Auto ISO.",
+        .help = "Magic Lantern Auto ISO for EOS M Movie mode.",
+        .help2 = "Adjusts ISO only; shutter and aperture stay fixed. Dual ISO disables it.",
     },
 };
 
@@ -231,35 +341,12 @@ static unsigned int auto_iso_init(void)
     return 0;
 }
 
-static void auto_iso_dual_vsync(void)
-{
-    if (!auto_iso_supported() || !is_movie_mode())
-        return;
-
-    int dual = auto_iso_dual_enabled();
-
-    /* Dual ISO and Canon Auto ISO cannot share the ISO control path. */
-    if (dual && !dual_iso_prev && eosm_auto_iso_enabled_config)
-        auto_iso_disable_and_restore_manual();
-
-    /* Do not rewrite PROP_ISO every VSYNC while Auto ISO is active.
-     * Canon owns the Auto ISO calculation once PROP_ISO == 0. */
-    dual_iso_prev = dual;
-}
-
-static unsigned int auto_iso_vsync_cbr(unsigned int unused)
-{
-    (void)unused;
-    auto_iso_dual_vsync();
-    return CBR_RET_CONTINUE;
-}
-
 MODULE_INFO_START()
     MODULE_INIT(auto_iso_init)
 MODULE_INFO_END()
 
 MODULE_CBRS_START()
-    MODULE_CBR(CBR_VSYNC, auto_iso_vsync_cbr, 0)
+    MODULE_CBR(CBR_SHOOT_TASK, auto_iso_shoot_task, 0)
 MODULE_CBRS_END()
 
 MODULE_CONFIGS_START()
