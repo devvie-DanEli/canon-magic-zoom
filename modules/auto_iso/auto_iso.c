@@ -10,31 +10,20 @@
 
 #ifdef CONFIG_EOSM
 
-/*
- * EOS M Movie-mode Auto ISO.
- *
- * Auto ISO is Canon's native state: raw ISO == 0.  The Auto ISO ceiling is
- * controlled through PROP_AUTO_ISO_RANGE.  This feature is intentionally
- * independent of Video Memory Recall M1/M2/M3.
- */
-
 #define AUTO_ISO_MAX_CHOICES 5
 static const uint8_t auto_iso_max_raw[AUTO_ISO_MAX_CHOICES] = {
-    88,  /* 400 */
-    96,  /* 800 */
-    104, /* 1600 */
-    112, /* 3200 */
-    120  /* 6400 */
+    88, 96, 104, 112, 120
 };
 static const char *auto_iso_max_labels[AUTO_ISO_MAX_CHOICES] = {
     "400", "800", "1600", "3200", "6400"
 };
 
+/* Auto ISO state and ceiling are deliberately independent of M1/M2/M3. */
 static CONFIG_INT("eosm.auto_iso", eosm_auto_iso_enabled_config, 0);
 static CONFIG_INT("eosm.auto_iso.max", eosm_auto_iso_max_index, 4);
 static CONFIG_INT("eosm.auto_iso.last_manual_iso", eosm_auto_iso_last_manual_raw, 88);
 
-static uint8_t auto_iso_range_min_raw = 72; /* Canon default minimum: ISO 100 */
+static uint8_t auto_iso_range_min_raw = 72;
 static int dual_iso_prev = 0;
 
 static int (*dual_iso_is_enabled_fn)(void) =
@@ -46,7 +35,6 @@ PROP_HANDLER(PROP_AUTO_ISO_RANGE)
 {
     if (len >= 2)
     {
-        /* EOS M PROP_AUTO_ISO_RANGE: byte 0 = maximum ISO, byte 1 = minimum. */
         uint8_t *p = (uint8_t *)buf;
         auto_iso_range_min_raw = p[1];
     }
@@ -59,8 +47,7 @@ static int auto_iso_dual_enabled(void)
 
 static int auto_iso_max_raw_value(void)
 {
-    int index = COERCE(eosm_auto_iso_max_index, 0, AUTO_ISO_MAX_CHOICES - 1);
-    return auto_iso_max_raw[index];
+    return auto_iso_max_raw[COERCE(eosm_auto_iso_max_index, 0, AUTO_ISO_MAX_CHOICES - 1)];
 }
 
 static void auto_iso_apply_limit(void)
@@ -73,7 +60,6 @@ static void auto_iso_apply_limit(void)
     range[1] = auto_iso_range_min_raw ? auto_iso_range_min_raw : 72;
     if (range[0] < range[1])
         range[0] = range[1];
-
     prop_request_change(PROP_AUTO_ISO_RANGE, range, 2);
 }
 
@@ -94,9 +80,7 @@ static void auto_iso_track_manual_iso(void)
 static void auto_iso_disable_and_restore_manual(void)
 {
     if (lens_info.raw_iso)
-    {
         eosm_auto_iso_last_manual_raw = lens_info.raw_iso;
-    }
 
     eosm_auto_iso_enabled_config = 0;
     lens_set_rawiso(auto_iso_last_manual());
@@ -119,7 +103,6 @@ static int auto_iso_set_enabled(int enabled)
         auto_iso_track_manual_iso();
         auto_iso_apply_limit();
         eosm_auto_iso_enabled_config = 1;
-        /* Zero raw ISO is Canon's native Auto ISO state. */
         lens_set_rawiso(0);
     }
     else
@@ -131,11 +114,9 @@ static int auto_iso_set_enabled(int enabled)
     return 1;
 }
 
-/* Exported to the core touch/editor and Memory Recall code. */
 int eosm_auto_iso_is_enabled(void)
 {
-    return eosm_auto_iso_enabled_config && is_movie_mode() &&
-           !auto_iso_dual_enabled();
+    return eosm_auto_iso_enabled_config && is_movie_mode() && !auto_iso_dual_enabled();
 }
 
 int eosm_auto_iso_is_locked(void)
@@ -148,7 +129,6 @@ int eosm_auto_iso_get_last_manual_iso(void)
     return auto_iso_last_manual();
 }
 
-/* Manual ISO changes from the normal ISO control should leave Auto mode. */
 int eosm_auto_iso_prepare_manual_iso(void)
 {
     if (eosm_auto_iso_enabled_config)
@@ -178,16 +158,8 @@ static LVINFO_UPDATE_FUNC(auto_iso_lv_update)
 {
     LVINFO_BUFFER(16);
 
-    if (!is_movie_mode())
+    if (!is_movie_mode() || auto_iso_dual_enabled())
     {
-        item->color_fg = COLOR_GRAY(50);
-        snprintf(buffer, sizeof(buffer), "AUTO OFF");
-        return;
-    }
-
-    if (auto_iso_dual_enabled())
-    {
-        /* Visible but greyed out while Dual ISO owns the ISO control. */
         item->color_fg = COLOR_GRAY(50);
         snprintf(buffer, sizeof(buffer), "AUTO OFF");
         return;
@@ -213,9 +185,8 @@ static MENU_SELECT_FUNC(auto_iso_menu_toggle)
 
 static MENU_SELECT_FUNC(auto_iso_max_select)
 {
-    int index = COERCE(eosm_auto_iso_max_index + sign, 0,
-                       AUTO_ISO_MAX_CHOICES - 1);
-    eosm_auto_iso_max_index = index;
+    eosm_auto_iso_max_index = COERCE(eosm_auto_iso_max_index + sign,
+                                     0, AUTO_ISO_MAX_CHOICES - 1);
     auto_iso_apply_limit();
 }
 
@@ -234,8 +205,7 @@ static MENU_UPDATE_FUNC(auto_iso_menu_update)
 
 static MENU_UPDATE_FUNC(auto_iso_max_update)
 {
-    int index = COERCE(eosm_auto_iso_max_index, 0,
-                       AUTO_ISO_MAX_CHOICES - 1);
+    int index = COERCE(eosm_auto_iso_max_index, 0, AUTO_ISO_MAX_CHOICES - 1);
     eosm_auto_iso_max_index = index;
     MENU_SET_VALUE("%s", auto_iso_max_labels[index]);
 }
@@ -249,7 +219,6 @@ static struct menu_entry auto_iso_menu[] = {
         .choices = CHOICES("AUTO OFF", "AUTO ON"),
         .select = auto_iso_menu_toggle,
         .update = auto_iso_menu_update,
-        /* SET opens the child submenu; left/right changes ON/OFF. */
         .edit_mode = EM_INLINE_ADJUST,
         .depends_on = DEP_LIVEVIEW | DEP_MOVIE_MODE,
         .children = (struct menu_entry[]) {
@@ -280,6 +249,14 @@ static void auto_iso_menu_init(void)
     menu_add("Expo", auto_iso_menu, COUNT(auto_iso_menu));
 }
 
+static void auto_iso_dual_vsync(void);
+MODULE_CBR(CBR_VSYNC, auto_iso_vsync_cbr, 0);
+static void auto_iso_vsync_cbr(int unused)
+{
+    (void)unused;
+    auto_iso_dual_vsync();
+}
+
 static void auto_iso_dual_vsync(void)
 {
     if (!is_movie_mode())
@@ -293,17 +270,10 @@ static void auto_iso_dual_vsync(void)
     if (eosm_auto_iso_enabled_config && !dual)
         auto_iso_apply_limit();
 
-    if (!eosm_auto_iso_enabled_config && !lens_info.raw_iso == 0)
+    if (!eosm_auto_iso_enabled_config)
         auto_iso_track_manual_iso();
 
     dual_iso_prev = dual;
-}
-
-MODULE_CBR(CBR_VSYNC, auto_iso_vsync_cbr, 0);
-static void auto_iso_vsync_cbr(int unused)
-{
-    (void)unused;
-    auto_iso_dual_vsync();
 }
 
 #endif
