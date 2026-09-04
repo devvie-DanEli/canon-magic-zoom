@@ -1,1 +1,8 @@
-see file
+name: Build EOS M Auto ISO v4 (disabled)
+on:
+  workflow_dispatch: {}
+jobs:
+  noop:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Disabled; use build-eosm.yml"
