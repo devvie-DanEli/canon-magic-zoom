@@ -4,11 +4,8 @@
 #include <lens.h>
 #include <config.h>
 #include <menu.h>
-#include <lvinfo.h>
 #include <module.h>
 #include <shoot.h>
-
-#ifdef CONFIG_EOSM
 
 #define AUTO_ISO_MAX_CHOICES 5
 static const uint8_t auto_iso_max_raw[AUTO_ISO_MAX_CHOICES] = { 88, 96, 104, 112, 120 };
@@ -21,23 +18,21 @@ static CONFIG_INT("eosm.auto_iso.last_manual_iso", eosm_auto_iso_last_manual_raw
 
 static uint8_t auto_iso_range_min_raw = 72;
 static int dual_iso_prev = 0;
+static int auto_iso_supported_cache = -1;
+static int auto_iso_last_applied_max = -1;
 
-static int (*dual_iso_is_enabled_fn)(void) = MODULE_FUNCTION(dual_iso_is_enabled);
+static int (*dual_iso_is_enabled)(void) = MODULE_FUNCTION(dual_iso_is_enabled);
 
-PROP_INT(PROP_ISO_AUTO, eosm_auto_iso_calculated_raw);
-
-PROP_HANDLER(PROP_AUTO_ISO_RANGE)
+static int auto_iso_supported(void)
 {
-    if (len >= 2)
-    {
-        uint8_t *p = (uint8_t *)buf;
-        auto_iso_range_min_raw = p[1];
-    }
+    if (auto_iso_supported_cache < 0)
+        auto_iso_supported_cache = is_camera("EOSM", "2.0.2");
+    return auto_iso_supported_cache;
 }
 
 static int auto_iso_dual_enabled(void)
 {
-    return dual_iso_is_enabled_fn && dual_iso_is_enabled_fn();
+    return dual_iso_is_enabled && dual_iso_is_enabled();
 }
 
 static int auto_iso_max_raw_value(void)
@@ -47,19 +42,28 @@ static int auto_iso_max_raw_value(void)
 
 static void auto_iso_apply_limit(void)
 {
-    if (!is_movie_mode()) return;
+    if (!auto_iso_supported() || !is_movie_mode())
+        return;
+
+    int index = COERCE(eosm_auto_iso_max_index, 0, AUTO_ISO_MAX_CHOICES - 1);
+    if (index == auto_iso_last_applied_max)
+        return;
 
     uint8_t range[2];
-    range[0] = auto_iso_max_raw_value();
+    range[0] = auto_iso_max_raw[index];
     range[1] = auto_iso_range_min_raw ? auto_iso_range_min_raw : 72;
-    if (range[0] < range[1]) range[0] = range[1];
+    if (range[0] < range[1])
+        range[0] = range[1];
+
     prop_request_change(PROP_AUTO_ISO_RANGE, range, 2);
+    auto_iso_last_applied_max = index;
 }
 
 static int auto_iso_last_manual(void)
 {
     int raw = eosm_auto_iso_last_manual_raw;
-    if (raw <= 0 || raw >= 255) raw = 88;
+    if (raw <= 0 || raw >= 255)
+        raw = 88;
     return raw;
 }
 
@@ -81,7 +85,8 @@ static void auto_iso_disable_and_restore_manual(void)
 
 static int auto_iso_set_enabled(int enabled)
 {
-    if (!is_movie_mode()) return 0;
+    if (!auto_iso_supported() || !is_movie_mode())
+        return 0;
 
     if (auto_iso_dual_enabled())
     {
@@ -94,7 +99,7 @@ static int auto_iso_set_enabled(int enabled)
         auto_iso_track_manual_iso();
         auto_iso_apply_limit();
         eosm_auto_iso_enabled_config = 1;
-        /* Zero raw ISO is Canon's native Auto ISO state. */
+        /* Canon native Auto ISO state is represented by raw ISO == 0. */
         lens_set_rawiso(0);
     }
     else
@@ -108,12 +113,13 @@ static int auto_iso_set_enabled(int enabled)
 
 int eosm_auto_iso_is_enabled(void)
 {
-    return eosm_auto_iso_enabled_config && is_movie_mode() && !auto_iso_dual_enabled();
+    return auto_iso_supported() && eosm_auto_iso_enabled_config &&
+           is_movie_mode() && !auto_iso_dual_enabled();
 }
 
 int eosm_auto_iso_is_locked(void)
 {
-    return auto_iso_dual_enabled();
+    return auto_iso_supported() && auto_iso_dual_enabled();
 }
 
 int eosm_auto_iso_get_last_manual_iso(void)
@@ -123,6 +129,9 @@ int eosm_auto_iso_get_last_manual_iso(void)
 
 int eosm_auto_iso_prepare_manual_iso(void)
 {
+    if (!auto_iso_supported())
+        return 0;
+
     if (eosm_auto_iso_enabled_config)
     {
         auto_iso_disable_and_restore_manual();
@@ -133,14 +142,19 @@ int eosm_auto_iso_prepare_manual_iso(void)
 
 int eosm_auto_iso_set_from_touch(int sign)
 {
+    if (!auto_iso_supported())
+        return 0;
+
     if (auto_iso_dual_enabled())
     {
         auto_iso_disable_and_restore_manual();
         return 1;
     }
 
-    if (sign > 0) auto_iso_set_enabled(1);
-    else if (sign < 0) auto_iso_set_enabled(0);
+    if (sign > 0)
+        auto_iso_set_enabled(1);
+    else if (sign < 0)
+        auto_iso_set_enabled(0);
     return 1;
 }
 
@@ -152,17 +166,19 @@ static MENU_SELECT_FUNC(auto_iso_menu_toggle)
 static MENU_SELECT_FUNC(auto_iso_max_select)
 {
     eosm_auto_iso_max_index = COERCE(eosm_auto_iso_max_index + sign, 0, AUTO_ISO_MAX_CHOICES - 1);
+    auto_iso_last_applied_max = -1;
     auto_iso_apply_limit();
 }
 
 static MENU_UPDATE_FUNC(auto_iso_menu_update)
 {
-    if (!is_movie_mode() || auto_iso_dual_enabled())
+    if (!auto_iso_supported() || !is_movie_mode() || auto_iso_dual_enabled())
     {
         MENU_SET_ENABLED(0);
         MENU_SET_VALUE("AUTO OFF");
         return;
     }
+
     MENU_SET_ENABLED(1);
     MENU_SET_VALUE(eosm_auto_iso_enabled_config ? "AUTO ON" : "AUTO OFF");
 }
@@ -207,20 +223,29 @@ static struct menu_entry auto_iso_menu[] = {
 
 static void auto_iso_menu_init(void)
 {
-    if (is_movie_mode()) auto_iso_apply_limit();
+    if (!auto_iso_supported())
+        return;
+
+    auto_iso_apply_limit();
     menu_add("Expo", auto_iso_menu, COUNT(auto_iso_menu));
 }
 
 static void auto_iso_dual_vsync(void)
 {
-    if (!is_movie_mode()) return;
+    if (!auto_iso_supported() || !is_movie_mode())
+        return;
+
     int dual = auto_iso_dual_enabled();
+
     if (dual && !dual_iso_prev && eosm_auto_iso_enabled_config)
         auto_iso_disable_and_restore_manual();
+
     if (eosm_auto_iso_enabled_config && !dual)
         auto_iso_apply_limit();
+
     if (!eosm_auto_iso_enabled_config)
         auto_iso_track_manual_iso();
+
     dual_iso_prev = dual;
 }
 
@@ -233,5 +258,3 @@ static void auto_iso_vsync_cbr(int unused)
 }
 
 INIT_FUNC("auto_iso", auto_iso_menu_init);
-
-#endif
