@@ -102,16 +102,17 @@ static struct mem_fields mem_slot_fields(int slot)
             f.crop_mode = &m1_crop_mode; f.ar = &m1_ar; f.res = &m1_res;
             f.fps = &m1_fps; f.bit = &m1_bit;
             break;
-        default:
+        case 2:
             f.valid = &m2_valid; f.iso = &m2_iso; f.shutter = &m2_shutter;
             f.aperture = &m2_aperture; f.wb_mode = &m2_wb_mode; f.kelvin = &m2_kelvin;
             f.crop_mode = &m2_crop_mode; f.ar = &m2_ar; f.res = &m2_res;
             f.fps = &m2_fps; f.bit = &m2_bit;
             break;
+        default:
+            break;
     }
     return f;
 }
-
 
 int mem_recall_is_available(void)
 {
@@ -135,14 +136,21 @@ const char *mem_recall_slot_label(int slot)
 
 int mem_recall_slot_has_data(int slot)
 {
+    struct mem_fields f;
     if (slot < 0 || slot > 2)
         return 0;
-    return *mem_slot_fields(slot).valid != 0;
+    f = mem_slot_fields(slot);
+    return f.valid && *f.valid != 0;
 }
 
 static void mem_snapshot_from_slot(int slot)
 {
     struct mem_fields f = mem_slot_fields(slot);
+    if (!f.valid || !*f.valid)
+    {
+        mem_loaded_slot = -1;
+        return;
+    }
     mem_loaded_iso = *f.iso;
     mem_loaded_shutter = *f.shutter;
     mem_loaded_aperture = *f.aperture;
@@ -166,15 +174,15 @@ static int mem_live_matches_loaded(void)
     if (lens_info.wb_mode != mem_loaded_wb_mode) return 0;
     if (lens_info.wb_mode == WB_KELVIN &&
         lens_info.kelvin != mem_loaded_kelvin) return 0;
-    if (crop_rec_memory_capture &&
-        crop_rec_memory_capture(&mode, &ar, &res, &fps, &bit))
-    {
-        if (mode != mem_loaded_crop_mode) return 0;
-        if (ar != mem_loaded_ar) return 0;
-        if (res != mem_loaded_res) return 0;
-        if (fps != mem_loaded_fps) return 0;
-        if (bit != mem_loaded_bit) return 0;
-    }
+    if (!crop_rec_memory_capture)
+        return 0;
+    if (!crop_rec_memory_capture(&mode, &ar, &res, &fps, &bit))
+        return 0;
+    if (mode != mem_loaded_crop_mode) return 0;
+    if (ar != mem_loaded_ar) return 0;
+    if (res != mem_loaded_res) return 0;
+    if (fps != mem_loaded_fps) return 0;
+    if (bit != mem_loaded_bit) return 0;
     return 1;
 }
 
@@ -198,34 +206,39 @@ int mem_recall_save(int slot)
         return 0;
 
     f = mem_slot_fields(slot);
+    if (!f.valid)
+        return 0;
+
+    /* Capture the complete video state first. Do not modify the destination
+     * slot until every part of the capture succeeded. */
+    if (!crop_rec_memory_capture ||
+        !crop_rec_memory_capture(&mode, &ar, &res, &fps, &bit))
+    {
+        NotifyBox(2000, "Cannot save %s: Crop Rec unavailable",
+                  mem_recall_slot_label(slot));
+        return 0;
+    }
+
     *f.iso = lens_info.raw_iso;
     *f.shutter = lens_info.raw_shutter;
     *f.aperture = lens_info.raw_aperture;
     *f.wb_mode = lens_info.wb_mode;
     *f.kelvin = lens_info.kelvin;
-
-    if (crop_rec_memory_capture &&
-        crop_rec_memory_capture(&mode, &ar, &res, &fps, &bit))
-    {
-        *f.crop_mode = mode;
-        *f.ar = ar;
-        *f.res = res;
-        *f.fps = fps;
-        *f.bit = bit;
-    }
-    else
-    {
-        *f.crop_mode = 0;
-        *f.ar = 0;
-        *f.res = 0;
-        *f.fps = 0;
-        *f.bit = 2;
-    }
+    *f.crop_mode = mode;
+    *f.ar = ar;
+    *f.res = res;
+    *f.fps = fps;
+    *f.bit = bit;
 
     *f.valid = 1;
     mem_last_slot = slot;
     mem_loaded_slot = slot;
     mem_snapshot_from_slot(slot);
+
+    /* Persist immediately so each M1/M2/M3 save is independent of the next
+     * camera shutdown or a later overwrite. */
+    config_save();
+
     NotifyBox(1500, "Saved %s", mem_recall_slot_label(slot));
     return 1;
 }
@@ -240,9 +253,25 @@ int mem_recall_load(int slot)
         return 0;
 
     f = mem_slot_fields(slot);
-    if (!*f.valid)
+    if (!f.valid || !*f.valid)
     {
         NotifyBox(1500, "%s empty", mem_recall_slot_label(slot));
+        return 0;
+    }
+
+    /* Do not partially load a memory if Crop Rec is unavailable or rejects
+     * the preset. Exposure and crop state should move together. */
+    if (!crop_rec_memory_apply)
+    {
+        NotifyBox(2000, "Cannot load %s: Crop Rec unavailable",
+                  mem_recall_slot_label(slot));
+        return 0;
+    }
+
+    if (!crop_rec_memory_apply(*f.crop_mode, *f.ar, *f.res, *f.fps, *f.bit))
+    {
+        NotifyBox(2000, "Cannot load %s: Crop Rec rejected memory",
+                  mem_recall_slot_label(slot));
         return 0;
     }
 
@@ -255,13 +284,10 @@ int mem_recall_load(int slot)
 
     if (*f.wb_mode == WB_AUTO)
         lens_set_wb_mode(WB_AUTO);
-    else if (*f.wb_mode == WB_KELVIN || *f.kelvin)
+    else if (*f.wb_mode == WB_KELVIN)
         lens_set_kelvin(*f.kelvin ? *f.kelvin : 5500);
     else
         lens_set_wb_mode(*f.wb_mode);
-
-    if (crop_rec_memory_apply)
-        crop_rec_memory_apply(*f.crop_mode, *f.ar, *f.res, *f.fps, *f.bit);
 
     mem_last_slot = slot;
     mem_loaded_slot = slot;
