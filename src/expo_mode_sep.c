@@ -4,6 +4,7 @@
 #include <lens.h>
 #include <config.h>
 #include <bmp.h>
+#include <lvinfo.h>
 #include "expo_mode_sep.h"
 
 /* --------------------------------------------------------------------------
