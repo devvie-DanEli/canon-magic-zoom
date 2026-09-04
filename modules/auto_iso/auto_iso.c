@@ -43,7 +43,7 @@ static int auto_iso_max_raw_value(void)
 
 static void auto_iso_apply_limit(void)
 {
-    if (!auto_iso_supported() || !is_movie_mode())
+    if (!auto_iso_supported() || !is_movie_mode() || !eosm_auto_iso_enabled_config)
         return;
 
     int index = COERCE(eosm_auto_iso_max_index, 0, AUTO_ISO_MAX_CHOICES - 1);
@@ -56,7 +56,7 @@ static void auto_iso_apply_limit(void)
     if (range[0] < range[1])
         range[0] = range[1];
 
-    prop_request_change(PROP_AUTO_ISO_RANGE, range, 2);
+    prop_request_change_wait(PROP_AUTO_ISO_RANGE, range, 2, 100);
     auto_iso_last_applied_max = index;
 }
 
@@ -81,6 +81,7 @@ static void auto_iso_disable_and_restore_manual(void)
 
     eosm_auto_iso_enabled_config = 0;
     lens_set_rawiso(auto_iso_last_manual());
+    auto_iso_last_applied_max = -1;
     lens_display_set_dirty();
 }
 
@@ -98,10 +99,13 @@ static int auto_iso_set_enabled(int enabled)
     if (enabled)
     {
         auto_iso_track_manual_iso();
-        auto_iso_apply_limit();
+        auto_iso_last_applied_max = -1;
         eosm_auto_iso_enabled_config = 1;
-        /* Canon native Auto ISO state is represented by raw ISO == 0. */
-        lens_set_rawiso(0);
+        auto_iso_apply_limit();
+
+        /* Canon's native Movie Auto ISO state is PROP_ISO == 0. */
+        uint32_t auto_iso = 0;
+        prop_request_change_wait(PROP_ISO, &auto_iso, 4, 100);
     }
     else
     {
@@ -180,7 +184,11 @@ static MENU_UPDATE_FUNC(auto_iso_max_update)
 {
     int index = COERCE(eosm_auto_iso_max_index, 0, AUTO_ISO_MAX_CHOICES - 1);
     eosm_auto_iso_max_index = index;
-    auto_iso_apply_limit();
+    if (eosm_auto_iso_enabled_config)
+    {
+        auto_iso_last_applied_max = -1;
+        auto_iso_apply_limit();
+    }
     MENU_SET_VALUE("%s", auto_iso_max_labels[index]);
 }
 
@@ -219,7 +227,6 @@ static unsigned int auto_iso_init(void)
     if (!auto_iso_supported())
         return 0;
 
-    auto_iso_apply_limit();
     menu_add("Expo", auto_iso_menu, COUNT(auto_iso_menu));
     return 0;
 }
@@ -231,24 +238,12 @@ static void auto_iso_dual_vsync(void)
 
     int dual = auto_iso_dual_enabled();
 
+    /* Dual ISO and Canon Auto ISO cannot share the ISO control path. */
     if (dual && !dual_iso_prev && eosm_auto_iso_enabled_config)
         auto_iso_disable_and_restore_manual();
 
-    /* If the user changes ISO manually while Auto ISO is enabled, treat that
-     * as an intentional return to manual ISO. */
-    if (eosm_auto_iso_enabled_config && !dual && lens_info.raw_iso)
-        eosm_auto_iso_enabled_config = 0;
-
-    if (eosm_auto_iso_enabled_config && !dual)
-    {
-        auto_iso_apply_limit();
-        if (lens_info.raw_iso)
-            lens_set_rawiso(0);
-    }
-
-    if (!eosm_auto_iso_enabled_config)
-        auto_iso_track_manual_iso();
-
+    /* Do not rewrite PROP_ISO every VSYNC while Auto ISO is active.
+     * Canon owns the Auto ISO calculation once PROP_ISO == 0. */
     dual_iso_prev = dual;
 }
 
