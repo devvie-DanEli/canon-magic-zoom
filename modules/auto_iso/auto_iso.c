@@ -24,18 +24,16 @@
 static const uint8_t auto_iso_max_raw[AUTO_ISO_MAX_CHOICES] = { 88, 96, 104, 112, 120 };
 static const char *auto_iso_max_labels[AUTO_ISO_MAX_CHOICES] = { "400", "800", "1600", "3200", "6400" };
 
-#define AUTO_ISO_MIN_RAW 72       /* ISO 100 */
-#define AUTO_ISO_TARGET_BV 0      /* zero = neutral exposure indication */
-#define AUTO_ISO_DEADBAND 2       /* 0.2 EV, in the 0.1-EV working scale */
-#define AUTO_ISO_UPDATE_TICKS 3   /* avoid hammering PROP_ISO every shoot-task tick */
+#define AUTO_ISO_MIN_RAW 72
+#define AUTO_ISO_TARGET_BV 0
+#define AUTO_ISO_DEADBAND 2
+#define AUTO_ISO_UPDATE_TICKS 3
 
 #define RAW2TV(raw) APEX_TV(raw) * 10 / 8
 #define RAW2AV(raw) APEX_AV(raw) * 10 / 8
-#define RAW2SV(raw) APEX_SV(raw) * 10 / 8
 #define RAW2EC(raw) raw * 10 / 8
 #define SV2RAW(apex) -APEX_SV(-(apex) * 100 / 125)
 
-/* Auto ISO state and ceiling are deliberately independent of M1/M2/M3. */
 static CONFIG_INT("eosm.auto_iso", eosm_auto_iso_enabled_config, 0);
 static CONFIG_INT("eosm.auto_iso.max", eosm_auto_iso_max_index, 4);
 static CONFIG_INT("eosm.auto_iso.last_manual_iso", eosm_auto_iso_last_manual_raw, 88);
@@ -48,6 +46,8 @@ static int auto_iso_last_target_raw = -1;
 static int auto_iso_last_applied_raw = -1;
 
 static int (*dual_iso_is_enabled)(void) = MODULE_FUNCTION(dual_iso_is_enabled);
+
+static int auto_iso_set_enabled(int enabled);
 
 static int auto_iso_supported(void)
 {
@@ -99,9 +99,6 @@ static void auto_iso_disable_and_restore_manual(void)
 }
 
 /*
- * Return the ISO raw value that should produce neutral exposure with the
- * current shutter/aperture and Canon's current exposure error indication.
- *
  * Magic Lantern's historical Auto Exposure module derives:
  *     BV = TV + AV - SV + EC
  * and uses get_ae_value() as the exposure-error term in M mode.
@@ -118,8 +115,7 @@ static int auto_iso_calculate_target_raw(void)
            + RAW2AV(lens_info.raw_aperture)
            + RAW2EC(ae_value);
 
-    int target_raw = SV2RAW(sv);
-    return target_raw;
+    return SV2RAW(sv);
 }
 
 static int auto_iso_choose_raw(int target_raw)
@@ -127,12 +123,9 @@ static int auto_iso_choose_raw(int target_raw)
     int max_raw = auto_iso_max_raw_value();
     target_raw = COERCE(target_raw, AUTO_ISO_MIN_RAW, max_raw);
 
-    /* Ignore tiny exposure-meter fluctuations to reduce ISO chatter. */
-    if (auto_iso_last_target_raw >= 0 &&
-        ABS(target_raw - auto_iso_last_target_raw) < AUTO_ISO_DEADBAND)
-    {
-        return auto_iso_last_applied_raw >= 0 ? auto_iso_last_applied_raw : target_raw;
-    }
+    if (auto_iso_last_applied_raw >= 0 &&
+        ABS(target_raw - auto_iso_last_applied_raw) < AUTO_ISO_DEADBAND)
+        return auto_iso_last_applied_raw;
 
     return target_raw;
 }
@@ -192,7 +185,6 @@ static unsigned int auto_iso_shoot_task(unsigned int unused)
 
     dual_iso_prev = 0;
 
-    /* Pace the controller. Shoot-task runs much faster than exposure needs to. */
     if (++auto_iso_tick < AUTO_ISO_UPDATE_TICKS)
         return CBR_RET_CONTINUE;
     auto_iso_tick = 0;
