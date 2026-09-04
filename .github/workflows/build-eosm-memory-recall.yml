@@ -1,0 +1,271 @@
+name: Build EOS M - Memory Recall Fix
+run-name: Build EOS M - Memory Recall Fix
+
+on:
+  push:
+    branches:
+      - feature/eosm-memory-recall-fix
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Install Python 2 + Python 3 Docutils
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python2 python3-docutils
+          sudo ln -sf /usr/bin/python2 /usr/local/bin/python
+          python --version
+          python2 --version
+          rst2html --version || true
+
+      - name: Generate placeholder module info
+        run: |
+          for dir in modules/*/; do
+            if [ -f "${dir}Makefile" ]; then
+              printf '#define MODULE_STRINGS() \\\n    MODULE_STRINGS_START() \\\n    MODULE_STRINGS_END()\n' > "${dir}module_strings.h"
+            fi
+          done
+
+      - name: Enable Photo control module for autoload
+        run: |
+          set -euo pipefail
+          grep -q '"photoctl"' src/module.c || \
+            sed -i 's/"hdmi_out"};/"hdmi_out", "photoctl"};/' src/module.c
+          grep 'core_modules' src/module.c
+
+      - name: Apply working EOS M Photo touch + Crop Mood lifecycle fixes + Memory modal priority
+        run: |
+          set -euo pipefail
+          python2 - <<'PY'
+          from __future__ import print_function
+
+          def replace_once(path, old, new, label):
+              data = open(path, 'r').read()
+              if old not in data:
+                  raise SystemExit('EOS M patch: missing ' + label)
+              data = data.replace(old, new, 1)
+              open(path, 'w').write(data)
+
+          replace_once(
+              'src/gui-common.c',
+              'static int slim_touch_lv_context_ok(void)\n'
+              '{\n'
+              '    return lv && is_movie_mode() && !RECORDING &&\n'
+              '           !gui_menu_shown() && lv_dispsize != 10 &&\n'
+              '           !slim_crop_rec_transition_busy();\n'
+              '}\n',
+              'static int slim_touch_lv_context_ok(void)\n'
+              '{\n'
+              '    return lv && !RECORDING && !gui_menu_shown() &&\n'
+              '           lv_dispsize != 10 && !slim_crop_rec_transition_busy();\n'
+              '}\n',
+              'shared Photo/Movie LV editor context'
+          )
+
+          replace_once(
+              'src/gui-common.c',
+              '    if (monitoring_graph_touch_toggle(x, y))\n'
+              '        return 1;\n\n'
+              '    if (mem_recall_panel_is_open())\n'
+              '        return mem_recall_panel_touch(x, y);\n',
+              '    if (mem_recall_panel_is_open())\n'
+              '        return mem_recall_panel_touch(x, y);\n\n'
+              '    if (is_movie_mode() && monitoring_graph_touch_toggle(x, y))\n'
+              '        return 1;\n',
+              'Memory Recall modal touch priority'
+          )
+
+          replace_once(
+              'src/gui-common.c',
+              '            slim_touch_lv_control_consumed = slim_touch_lv_direct_editor(event);\n'
+              '            if (slim_touch_lv_control_consumed)\n'
+              '                return 0;\n'
+              '            /* Tap gestures (including Quick Panel) only originate from the\n',
+              '            slim_touch_lv_control_consumed = slim_touch_lv_direct_editor(event);\n'
+              '            if (slim_touch_lv_control_consumed)\n'
+              '                return 0;\n'
+              '            if (!is_movie_mode())\n'
+              '            {\n'
+              '                /* Photo mode has field-editor touch only. Do not enter\n'
+              '                 * the Movie tap/Quick Screen gesture state machine. */\n'
+              '                slim_touch_lv_control_consumed = 1;\n'
+              '                slim_touch_lv_pressed = 0;\n'
+              '                slim_touch_tap_count = 0;\n'
+              '                slim_touch_tap_deadline = 0;\n'
+              '                return 0;\n'
+              '            }\n'
+              '            /* Tap gestures (including Quick Panel) only originate from the\n',
+              'Photo-mode no-fallthrough gate'
+          )
+
+          replace_once(
+              'src/gui-common.c',
+              '        if (slim_touch_lv_context_ok())\n'
+              '        {\n'
+              '            /* Keep the existing simultaneous two-finger Last Settings shortcut. */\n'
+              '            gui_open_last_menu_selection();\n'
+              '            return 0;\n'
+              '        }\n',
+              '        if (slim_touch_lv_context_ok() && is_movie_mode())\n'
+              '        {\n'
+              '            /* Keep the existing simultaneous two-finger Last Settings shortcut. */\n'
+              '            gui_open_last_menu_selection();\n'
+              '            return 0;\n'
+              '        }\n'
+              '        if (slim_touch_lv_context_ok())\n'
+              '            return 0;\n',
+              'Movie-only two-finger gesture'
+          )
+
+          replace_once(
+              'src/gui-common.c',
+              'static void slim_touch_open_for_taps(int taps)\n'
+              '{\n'
+              '    if (!slim_touch_lv_context_ok() || lvinfo_touch_editor_is_open())\n'
+              '        return;\n',
+              'static void slim_touch_open_for_taps(int taps)\n'
+              '{\n'
+              '    if (!slim_touch_lv_context_ok() || !is_movie_mode() ||\n'
+              '        lvinfo_touch_editor_is_open())\n'
+              '        return;\n',
+              'Movie-only tap launcher'
+          )
+
+          replace_once(
+              'modules/photoctl/photoctl.c',
+              '    MODULE_CBR(CBR_KEYPRESS_RAW, photoctl_handle_touch, 0)\n',
+              '',
+              'photoctl touch CBR removal'
+          )
+
+          replace_once(
+              'modules/crop_rec/crop_rec.c',
+              '    if (!lv || menu_shown || RECORDING_RAW || mlv_busy)\n'
+              '        return 1;\n\n'
+              '    /* x10 is Canon\'s focusing view, not the custom x5 preview.  Do not hold\n',
+              '    if (!lv)\n'
+              '    {\n'
+              '        eosm_lv_guard_clear();\n'
+              '        return 0;\n'
+              '    }\n\n'
+              '    if (menu_shown || RECORDING_RAW || mlv_busy)\n'
+              '        return 1;\n\n'
+              '    /* x10 is Canon\'s focusing view, not the custom x5 preview.  Do not hold\n',
+              'EOS M guard release outside Live View'
+          )
+
+          replace_once(
+              'modules/crop_rec/crop_rec.c',
+              '    static int eosm_lv_was_active = 0;\n'
+              '    static int eosm_recording_was_active = 0;\n'
+              '    static int eosm_display_mode = -1;\n',
+              '    static int eosm_lv_was_active = 0;\n'
+              '    static int eosm_recording_was_active = 0;\n'
+              '    static int eosm_display_mode = -1;\n'
+              '    static int eosm_movie_mode_was_active = -1;\n',
+              'EOS M Movie/Photo transition state'
+          )
+
+          replace_once(
+              'modules/crop_rec/crop_rec.c',
+              '    /* Cover every path back into Movie Live View, including Canon menus\n'
+              '     * (which may not set gui_menu_shown), recording stop and boot. */\n'
+              '    if ((lv && !eosm_lv_was_active) ||\n'
+              '        (eosm_recording_was_active && !RECORDING) ||\n'
+              '        (eosm_display_mode != -1 && eosm_display_mode != lv_disp_mode))\n'
+              '        eosm_lv_guard_request();\n'
+              '    eosm_lv_was_active = lv;\n'
+              '    eosm_recording_was_active = RECORDING;\n'
+              '    eosm_display_mode = lv_disp_mode;\n',
+              '    /* Cover every path back into Movie Live View, including Canon menus\n'
+              '     * (which may not set gui_menu_shown), recording stop, boot, and\n'
+              '     * the EOS M Movie <-> Photo mode switch itself. */\n'
+              '    int eosm_movie_mode_active = is_movie_mode();\n'
+              '    int eosm_movie_mode_changed =\n'
+              '        (eosm_movie_mode_was_active != -1 &&\n'
+              '         eosm_movie_mode_was_active != eosm_movie_mode_active);\n'
+              '\n'
+              '    /* Self-heal lost Crop Mood hooks whenever Movie Live View is\n'
+              '     * active. This covers the EOS M race where PROP_LV_ACTION is\n'
+              '     * delivered before Canon updates lv_movie_select. */\n'
+              '    if (eosm_movie_mode_active && lv && CROP_PRESET_MENU && !patch_active)\n'
+              '    {\n'
+              '        update_patch();\n'
+              '        eosm_lv_guard_request();\n'
+              '    }\n'
+              '    else if (eosm_movie_mode_changed ||\n'
+              '             (lv && !eosm_lv_was_active) ||\n'
+              '             (eosm_recording_was_active && !RECORDING) ||\n'
+              '             (eosm_display_mode != -1 && eosm_display_mode != lv_disp_mode))\n'
+              '    {\n'
+              '        if (eosm_movie_mode_active && lv)\n'
+              '            eosm_lv_guard_request();\n'
+              '        else if (!eosm_movie_mode_active)\n'
+              '            eosm_lv_guard_clear();\n'
+              '    }\n'
+              '    eosm_movie_mode_was_active = eosm_movie_mode_active;\n'
+              '    eosm_lv_was_active = lv;\n'
+              '    eosm_recording_was_active = RECORDING;\n'
+              '    eosm_display_mode = lv_disp_mode;\n',
+              'EOS M Movie/Photo reactivation and self-heal'
+          )
+
+          print('EOS M Memory Recall build patches applied')
+          PY
+
+      - name: Cache ARM toolchain
+        id: cache-toolchain
+        uses: actions/cache@v4
+        with:
+          path: ~/gcc-arm-none-eabi-5_4-2016q3
+          key: arm-toolchain-5_4-2016q3
+
+      - name: Download ARM toolchain
+        if: steps.cache-toolchain.outputs.cache-hit != 'true'
+        run: |
+          cd ~
+          wget -q https://launchpad.net/gcc-arm-embedded/5.0/5-2016-q3-update/+download/gcc-arm-none-eabi-5_4-2016q3-20160926-linux.tar.bz2
+          tar xjf gcc-arm-none-eabi-5_4-2016q3-20160926-linux.tar.bz2
+
+      - name: Add toolchain to PATH
+        run: echo "$HOME/gcc-arm-none-eabi-5_4-2016q3/bin" >> "$GITHUB_PATH"
+
+      - name: Check compiler
+        run: arm-none-eabi-gcc --version
+
+      - name: Build EOS M platform + modules + package zip
+        run: make -C platform/EOSM.202 zip SHELL=/bin/bash
+
+      - name: Verify build outputs
+        run: |
+          set -euo pipefail
+          ls -lh platform/EOSM.202/autoexec.bin
+          ls -lh platform/EOSM.202/magiclantern-*.zip
+          zipfile=$(ls platform/EOSM.202/magiclantern-*.zip)
+          for mod in crop_rec.mo dual_iso.mo hdmi_out.mo mlv_lite.mo mlv_play.mo mlv_snd.mo sd_uhs.mo file_man.mo bench.mo photoctl.mo; do
+            unzip -l "$zipfile" | grep -q "$mod"
+            echo "OK: $mod"
+          done
+          if unzip -l "$zipfile" | grep -E 'lua\\.mo|selftest\\.mo|arkanoid\\.mo'; then
+            echo "Unexpected slim module in zip"
+            exit 1
+          fi
+
+      - name: Upload autoexec.bin
+        uses: actions/upload-artifact@v4
+        with:
+          name: autoexec-memory-recall.bin
+          path: platform/EOSM.202/autoexec.bin
+          if-no-files-found: error
+
+      - name: Upload full Magic Lantern zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: magiclantern-eosm-memory-recall.zip
+          path: platform/EOSM.202/magiclantern-*.zip
+          if-no-files-found: error
