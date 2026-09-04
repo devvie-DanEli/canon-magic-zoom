@@ -21,10 +21,10 @@ static CONFIG_INT("eosm.auto_iso.last_manual_iso", eosm_auto_iso_last_manual_raw
 
 static uint8_t auto_iso_range_min_raw = 72;
 static int dual_iso_prev = 0;
+static int auto_iso_applied_max_raw = -1;
+static int auto_iso_applied_min_raw = -1;
 
 static int (*dual_iso_is_enabled_fn)(void) = MODULE_FUNCTION(dual_iso_is_enabled);
-
-PROP_INT(PROP_ISO_AUTO, eosm_auto_iso_calculated_raw);
 
 PROP_HANDLER(PROP_AUTO_ISO_RANGE)
 {
@@ -49,11 +49,19 @@ static void auto_iso_apply_limit(void)
 {
     if (!is_movie_mode()) return;
 
-    uint8_t range[2];
-    range[0] = auto_iso_max_raw_value();
-    range[1] = auto_iso_range_min_raw ? auto_iso_range_min_raw : 72;
-    if (range[0] < range[1]) range[0] = range[1];
-    prop_request_change(PROP_AUTO_ISO_RANGE, range, 2);
+    uint8_t min_raw = auto_iso_range_min_raw ? auto_iso_range_min_raw : 72;
+    uint8_t max_raw = auto_iso_max_raw_value();
+    if (max_raw < min_raw) max_raw = min_raw;
+
+    if (max_raw == auto_iso_applied_max_raw && min_raw == auto_iso_applied_min_raw)
+        return;
+
+    uint8_t range[2] = { max_raw, min_raw };
+    if (prop_request_change(PROP_AUTO_ISO_RANGE, range, 2) == 0)
+    {
+        auto_iso_applied_max_raw = max_raw;
+        auto_iso_applied_min_raw = min_raw;
+    }
 }
 
 static int auto_iso_last_manual(void)
@@ -92,6 +100,8 @@ static int auto_iso_set_enabled(int enabled)
     if (enabled)
     {
         auto_iso_track_manual_iso();
+        auto_iso_applied_max_raw = -1;
+        auto_iso_applied_min_raw = -1;
         auto_iso_apply_limit();
         eosm_auto_iso_enabled_config = 1;
         lens_set_rawiso(0);
@@ -146,12 +156,20 @@ int eosm_auto_iso_set_from_touch(int sign)
 static LVINFO_UPDATE_FUNC(auto_iso_lv_update)
 {
     LVINFO_BUFFER(16);
-    if (!is_movie_mode() || auto_iso_dual_enabled())
+    if (!is_movie_mode())
+    {
+        item->value = 0;
+        item->width = 0;
+        return;
+    }
+
+    if (auto_iso_dual_enabled())
     {
         item->color_fg = COLOR_GRAY(50);
         snprintf(buffer, sizeof(buffer), "AUTO OFF");
         return;
     }
+
     item->color_fg = COLOR_WHITE;
     snprintf(buffer, sizeof(buffer), "%s", eosm_auto_iso_enabled_config ? "AUTO ON" : "AUTO OFF");
 }
@@ -172,6 +190,8 @@ static MENU_SELECT_FUNC(auto_iso_menu_toggle)
 static MENU_SELECT_FUNC(auto_iso_max_select)
 {
     eosm_auto_iso_max_index = COERCE(eosm_auto_iso_max_index + sign, 0, AUTO_ISO_MAX_CHOICES - 1);
+    auto_iso_applied_max_raw = -1;
+    auto_iso_applied_min_raw = -1;
     auto_iso_apply_limit();
 }
 
@@ -203,7 +223,6 @@ static struct menu_entry auto_iso_menu[] = {
         .choices = CHOICES("AUTO OFF", "AUTO ON"),
         .select = auto_iso_menu_toggle,
         .update = auto_iso_menu_update,
-        /* SET opens the child submenu; left/right changes ON/OFF. */
         .edit_mode = EM_INLINE_ADJUST,
         .depends_on = DEP_LIVEVIEW | DEP_MOVIE_MODE,
         .children = (struct menu_entry[]) {
@@ -228,21 +247,31 @@ static struct menu_entry auto_iso_menu[] = {
 
 static void auto_iso_menu_init(void)
 {
-    if (is_movie_mode()) auto_iso_apply_limit();
     lvinfo_add_item(&auto_iso_lv_item);
     menu_add("Expo", auto_iso_menu, COUNT(auto_iso_menu));
 }
 
 static void auto_iso_dual_vsync(void)
 {
-    if (!is_movie_mode()) return;
+    if (!is_movie_mode())
+    {
+        auto_iso_applied_max_raw = -1;
+        auto_iso_applied_min_raw = -1;
+        dual_iso_prev = 0;
+        return;
+    }
+
     int dual = auto_iso_dual_enabled();
+
     if (dual && !dual_iso_prev && eosm_auto_iso_enabled_config)
         auto_iso_disable_and_restore_manual();
+
     if (eosm_auto_iso_enabled_config && !dual)
         auto_iso_apply_limit();
+
     if (!eosm_auto_iso_enabled_config)
         auto_iso_track_manual_iso();
+
     dual_iso_prev = dual;
 }
 
