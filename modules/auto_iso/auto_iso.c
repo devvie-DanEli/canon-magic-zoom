@@ -4,6 +4,7 @@
 #include <lens.h>
 #include <config.h>
 #include <menu.h>
+#include <lvinfo.h>
 #include <module.h>
 #include <shoot.h>
 
@@ -50,7 +51,7 @@ static void auto_iso_apply_limit(void)
         return;
 
     uint8_t range[2];
-    range[0] = auto_iso_max_raw[index];
+    range[0] = auto_iso_max_raw_value();
     range[1] = auto_iso_range_min_raw ? auto_iso_range_min_raw : 72;
     if (range[0] < range[1])
         range[0] = range[1];
@@ -163,13 +164,6 @@ static MENU_SELECT_FUNC(auto_iso_menu_toggle)
     auto_iso_set_enabled(!eosm_auto_iso_enabled_config);
 }
 
-static MENU_SELECT_FUNC(auto_iso_max_select)
-{
-    eosm_auto_iso_max_index = COERCE(eosm_auto_iso_max_index + sign, 0, AUTO_ISO_MAX_CHOICES - 1);
-    auto_iso_last_applied_max = -1;
-    auto_iso_apply_limit();
-}
-
 static MENU_UPDATE_FUNC(auto_iso_menu_update)
 {
     if (!auto_iso_supported() || !is_movie_mode() || auto_iso_dual_enabled())
@@ -178,7 +172,6 @@ static MENU_UPDATE_FUNC(auto_iso_menu_update)
         MENU_SET_VALUE("AUTO OFF");
         return;
     }
-
     MENU_SET_ENABLED(1);
     MENU_SET_VALUE(eosm_auto_iso_enabled_config ? "AUTO ON" : "AUTO OFF");
 }
@@ -187,6 +180,7 @@ static MENU_UPDATE_FUNC(auto_iso_max_update)
 {
     int index = COERCE(eosm_auto_iso_max_index, 0, AUTO_ISO_MAX_CHOICES - 1);
     eosm_auto_iso_max_index = index;
+    auto_iso_apply_limit();
     MENU_SET_VALUE("%s", auto_iso_max_labels[index]);
 }
 
@@ -208,7 +202,6 @@ static struct menu_entry auto_iso_menu[] = {
                 .min = 0,
                 .max = AUTO_ISO_MAX_CHOICES - 1,
                 .choices = (const char **)auto_iso_max_labels,
-                .select = auto_iso_max_select,
                 .update = auto_iso_max_update,
                 .edit_mode = EM_INLINE_ADJUST,
                 .depends_on = DEP_LIVEVIEW | DEP_MOVIE_MODE,
@@ -221,8 +214,9 @@ static struct menu_entry auto_iso_menu[] = {
     },
 };
 
-static void auto_iso_menu_init(void)
+static void auto_iso_menu_init(void *unused)
 {
+    (void)unused;
     if (!auto_iso_supported())
         return;
 
@@ -240,8 +234,17 @@ static void auto_iso_dual_vsync(void)
     if (dual && !dual_iso_prev && eosm_auto_iso_enabled_config)
         auto_iso_disable_and_restore_manual();
 
+    /* If the user changes ISO manually while Auto ISO is enabled, treat that
+     * as an intentional return to manual ISO. */
+    if (eosm_auto_iso_enabled_config && !dual && lens_info.raw_iso)
+        eosm_auto_iso_enabled_config = 0;
+
     if (eosm_auto_iso_enabled_config && !dual)
+    {
         auto_iso_apply_limit();
+        if (lens_info.raw_iso)
+            lens_set_rawiso(0);
+    }
 
     if (!eosm_auto_iso_enabled_config)
         auto_iso_track_manual_iso();
@@ -249,12 +252,15 @@ static void auto_iso_dual_vsync(void)
     dual_iso_prev = dual;
 }
 
-static void auto_iso_vsync_cbr(int unused);
-MODULE_CBR(CBR_VSYNC, auto_iso_vsync_cbr, 0);
-static void auto_iso_vsync_cbr(int unused)
+static unsigned int auto_iso_vsync_cbr(unsigned int unused)
 {
     (void)unused;
     auto_iso_dual_vsync();
+    return CBR_RET_CONTINUE;
 }
+
+MODULE_CBRS_START();
+MODULE_CBR(CBR_VSYNC, auto_iso_vsync_cbr, 0);
+MODULE_CBRS_END();
 
 INIT_FUNC("auto_iso", auto_iso_menu_init);
