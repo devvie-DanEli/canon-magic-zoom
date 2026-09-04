@@ -11,6 +11,11 @@
 /*
  * EOS M Auto ISO
  *
+ * DISABLED: continuous Auto ISO is not reliable on EOS M Crop Mood / RAW
+ * recording (same practical limitation as Danne builds). Module is kept in
+ * tree for reference but is not built (removed from ML_MODULES) and
+ * auto_iso_supported() always returns 0.
+ *
  * The previous implementation only requested Canon's native Movie Auto ISO
  * state (PROP_ISO == 0). On EOS M 2.0.2 that state can remain at one ISO
  * value while recording RAW. We therefore calculate the ISO required by
@@ -51,9 +56,10 @@ static int auto_iso_set_enabled(int enabled);
 
 static int auto_iso_supported(void)
 {
-    if (auto_iso_supported_cache < 0)
-        auto_iso_supported_cache = is_camera("EOSM", "2.0.2");
-    return auto_iso_supported_cache;
+    /* Disabled: continuous Auto ISO is not reliable on EOS M Crop Mood /
+     * RAW recording (same practical limitation as Danne builds). */
+    (void)auto_iso_supported_cache;
+    return 0;
 }
 
 static int auto_iso_dual_enabled(void)

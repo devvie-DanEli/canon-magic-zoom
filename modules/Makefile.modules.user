@@ -1,10 +1,10 @@
 # Slim EOS M module set (crop_rec RAW workflow)
 # mlv_lite must build before dual_iso, mlv_play, and mlv_snd (checkdep)
 # file_man: required by mlv_play; File Manager tab hidden in slim UI
+# auto_iso removed: continuous Auto ISO is not reliable on EOS M RAW recording
 ML_MODULES = \
 	mlv_lite \
 	crop_rec \
-	auto_iso \
 	dual_iso \
 	hdmi_out \
 	mlv_play \
