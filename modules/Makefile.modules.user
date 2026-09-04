@@ -4,6 +4,7 @@
 ML_MODULES = \
 	mlv_lite \
 	crop_rec \
+	auto_iso \
 	dual_iso \
 	hdmi_out \
 	mlv_play \
