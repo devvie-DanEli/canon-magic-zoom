@@ -28,6 +28,15 @@ jobs:
             fi
           fi
 
+      - name: Overlay EOS M exposure separation sources
+        run: |
+          set -euo pipefail
+          git show origin/feature/eosm-auto-iso:src/expo_mode_sep.c > src/expo_mode_sep.c
+          git show origin/feature/eosm-auto-iso:src/expo_mode_sep.h > src/expo_mode_sep.h
+          test -s src/expo_mode_sep.c
+          test -s src/expo_mode_sep.h
+          echo "Using EOS M Photo/Movie exposure separation"
+
       - name: Install Python 2 + Python 3 Docutils
         run: |
           sudo apt-get update
@@ -47,6 +56,48 @@ jobs:
           set -euo pipefail
           grep -q '"photoctl"' src/module.c || \
             sed -i 's/"hdmi_out"};/"hdmi_out", "photoctl"};/' src/module.c
+
+      - name: Integrate exposure separation into shoot task
+        run: |
+          set -euo pipefail
+          python2 - <<'PY'
+          from __future__ import print_function
+
+          def replace_once(path, old, new, label):
+              data = open(path, 'r').read()
+              if old not in data:
+                  raise SystemExit('EOS M patch: missing ' + label)
+              data = data.replace(old, new, 1)
+              open(path, 'w').write(data)
+              print('OK:', label)
+
+          replace_once(
+              'src/shoot.c',
+              '#include "powersave.h"\n',
+              '#include "powersave.h"\n#include "expo_mode_sep.h"\n',
+              'exposure separation header'
+          )
+
+          replace_once(
+              'src/shoot.c',
+              '#if defined(CONFIG_MODULES)\n        module_exec_cbr(CBR_SHOOT_TASK);\n#endif\n',
+              '        expo_sep_update();\n'
+              '        expo_sep_apply_deferred();\n\n'
+              '#if defined(CONFIG_MODULES)\n'
+              '        module_exec_cbr(CBR_SHOOT_TASK);\n'
+              '#endif\n',
+              'exposure separation shoot-task hook'
+          )
+
+          replace_once(
+              'src/Makefile.src',
+              '\tpowersave.o \\\n',
+              '\tpowersave.o \\\n\texpo_mode_sep.o \\\n',
+              'exposure separation object'
+          )
+
+          print('EOS M exposure separation integration applied')
+          PY
 
       - name: Apply photo+movie field editors; keep 2x2 grid movie-only
         run: |
