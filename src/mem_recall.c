@@ -278,7 +278,7 @@ int mem_recall_load(int slot)
     if (*f.iso)
         lens_set_rawiso(*f.iso);
     if (*f.shutter)
-        lens_set_rawshutter(*f.shutter);
+        hdr_set_rawshutter(*f.shutter);
     if (*f.aperture && lens_info.lens_exists)
         lens_set_rawaperture(*f.aperture);
 
@@ -389,32 +389,28 @@ void mem_recall_panel_draw(void)
     mem_draw_button(MEM_LOAD_X, MEM_BTN_Y, MEM_BTN_W, MEM_BTN_H, "Load");
 }
 
-static int mem_in_rect(int x, int y, int rx, int ry, int rw, int rh)
-{
-    return x >= rx && x < rx + rw && y >= ry && y < ry + rh;
-}
-
 int mem_recall_panel_touch(int x, int y)
 {
+    int min_y = MEM_BOX_Y;
+    int max_y = MEM_BOX_Y + MEM_BOX_H;
+
     if (!mem_panel_open)
         return 0;
-
-    if (!mem_in_rect(x, y, MEM_BOX_X, MEM_BOX_Y, MEM_BOX_W, MEM_BOX_H))
-    {
-        mem_recall_panel_close();
+    if (x < MEM_BOX_X || x > MEM_BOX_X + MEM_BOX_W || y < min_y || y > max_y)
         return 1;
-    }
 
     if (mem_ui_confirm)
     {
-        if (mem_in_rect(x, y, MEM_SAVE_X, MEM_BTN_Y, MEM_BTN_W, MEM_BTN_H))
+        if (x >= MEM_SAVE_X && x < MEM_SAVE_X + MEM_BTN_W &&
+            y >= MEM_BTN_Y && y < MEM_BTN_Y + MEM_BTN_H)
         {
-            mem_ui_confirm = 0;
             mem_recall_save(mem_ui_slot);
+            mem_ui_confirm = 0;
             lens_display_set_dirty();
             return 1;
         }
-        if (mem_in_rect(x, y, MEM_LOAD_X, MEM_BTN_Y, MEM_BTN_W, MEM_BTN_H))
+        if (x >= MEM_LOAD_X && x < MEM_LOAD_X + MEM_BTN_W &&
+            y >= MEM_BTN_Y && y < MEM_BTN_Y + MEM_BTN_H)
         {
             mem_ui_confirm = 0;
             lens_display_set_dirty();
@@ -423,39 +419,36 @@ int mem_recall_panel_touch(int x, int y)
         return 1;
     }
 
-    /* Left chevron / left half of slot row → previous */
-    if (mem_in_rect(x, y, MEM_CX - 160, MEM_SLOT_Y - 20, 120, 90))
-    {
-        mem_ui_slot = MOD(mem_ui_slot - 1, MEM_SLOTS);
-        lens_display_set_dirty();
-        return 1;
-    }
-    /* Right chevron / right half → next */
-    if (mem_in_rect(x, y, MEM_CX + 40, MEM_SLOT_Y - 20, 120, 90))
-    {
-        mem_ui_slot = MOD(mem_ui_slot + 1, MEM_SLOTS);
-        lens_display_set_dirty();
-        return 1;
-    }
-
-    if (mem_in_rect(x, y, MEM_SAVE_X, MEM_BTN_Y, MEM_BTN_W, MEM_BTN_H))
+    if (x >= MEM_SAVE_X && x < MEM_SAVE_X + MEM_BTN_W &&
+        y >= MEM_BTN_Y && y < MEM_BTN_Y + MEM_BTN_H)
     {
         if (mem_recall_slot_has_data(mem_ui_slot))
-        {
             mem_ui_confirm = 1;
-            lens_display_set_dirty();
-        }
         else
-        {
             mem_recall_save(mem_ui_slot);
-            lens_display_set_dirty();
-        }
+        lens_display_set_dirty();
         return 1;
     }
 
-    if (mem_in_rect(x, y, MEM_LOAD_X, MEM_BTN_Y, MEM_BTN_W, MEM_BTN_H))
+    if (x >= MEM_LOAD_X && x < MEM_LOAD_X + MEM_BTN_W &&
+        y >= MEM_BTN_Y && y < MEM_BTN_Y + MEM_BTN_H)
     {
         mem_recall_load(mem_ui_slot);
+        return 1;
+    }
+
+    if (x >= MEM_CX - 145 && x < MEM_CX - 55 &&
+        y >= MEM_SLOT_Y - 10 && y < MEM_SLOT_Y + MEM_CHEV_H + 10)
+    {
+        mem_ui_slot = (mem_ui_slot + MEM_SLOTS - 1) % MEM_SLOTS;
+        lens_display_set_dirty();
+        return 1;
+    }
+
+    if (x > MEM_CX + 55 && x <= MEM_CX + 145 &&
+        y >= MEM_SLOT_Y - 10 && y < MEM_SLOT_Y + MEM_CHEV_H + 10)
+    {
+        mem_ui_slot = (mem_ui_slot + 1) % MEM_SLOTS;
         lens_display_set_dirty();
         return 1;
     }
