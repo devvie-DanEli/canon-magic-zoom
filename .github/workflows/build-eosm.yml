@@ -53,10 +53,9 @@ jobs:
           new = '\thistogram.o \\\n\traw_meter.o \\\n\teosm_auto_iso_lv.o \\\n'
           if old not in data:
               raise SystemExit('EOS M patch: histogram object anchor missing')
-          if 'raw_meter.o' not in data:
-              data = data.replace(old, new, 1)
-          if 'eosm_auto_iso_lv.o' not in data:
-              data = data.replace('\thistogram.o \\\n', '\thistogram.o \\\n\traw_meter.o \\\n\teosm_auto_iso_lv.o \\\n', 1)
+          if 'raw_meter.o' in data or 'eosm_auto_iso_lv.o' in data:
+              raise SystemExit('EOS M patch: RAW meter objects already present unexpectedly')
+          data = data.replace(old, new, 1)
           open(path, 'w').write(data)
           PY
 
