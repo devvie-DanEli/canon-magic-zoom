@@ -16,7 +16,8 @@
  *
  * Canon's native Movie Auto ISO path was found to hold one value while the
  * EOS M is recording RAW, so this module controls ISO directly. The meter is
- * a compact RAW percentile scanner operating on the LiveView RAW buffer.
+ * derived from Magic Lantern's existing RAW histogram percentile scanner,
+ * which operates on the same LiveView RAW buffer used by the RAW overlays.
  *
  * Shutter and aperture remain user-controlled. ISO is the only parameter
  * changed by this controller.
@@ -29,7 +30,7 @@ static const char *auto_iso_max_labels[AUTO_ISO_MAX_CHOICES] = { "400", "800", "
 #define AUTO_ISO_MIN_RAW           72       /* ISO 100 */
 #define AUTO_ISO_TARGET_EV         (-2.50f) /* median target, relative to RAW white */
 #define AUTO_ISO_PERCENTILE_X10    500      /* 50th percentile */
-#define AUTO_ISO_SCAN_SPEED        8        /* fast RAW meter scan */
+#define AUTO_ISO_SCAN_SPEED        8        /* fast RAW percentile scan */
 #define AUTO_ISO_UPDATE_TICKS      8
 #define AUTO_ISO_DEADBAND_RAW      2        /* 1/4 stop */
 #define AUTO_ISO_MAX_STEP_RAW      8        /* never jump more than 1 EV/update */
@@ -99,14 +100,13 @@ static void auto_iso_disable_and_restore_manual(void)
 }
 
 /*
- * The RAW meter returns a quantized sensor-code sample. Converting that sample
- * to EV lets us measure how far the median image brightness is from a fixed
- * target. Since shutter and aperture stay fixed, the correction is applied
- * directly to ISO at 8 raw ISO codes per EV.
+ * The existing RAW histogram API already implements the correct sensor-space
+ * percentile scan and is available from the core. Reuse it instead of
+ * maintaining a second, incompatible RAW-buffer scanner in this module.
  */
 static int auto_iso_calculate_target_raw(int current_iso_raw)
 {
-    int raw_level = raw_meter_get_percentile_level(
+    int raw_level = raw_hist_get_percentile_level(
         AUTO_ISO_PERCENTILE_X10,
         GRAY_PROJECTION_GREEN,
         AUTO_ISO_SCAN_SPEED
@@ -156,8 +156,6 @@ static void auto_iso_task(void *unused)
         if (current_iso_raw < AUTO_ISO_MIN_RAW || current_iso_raw > 120)
             current_iso_raw = auto_iso_last_manual();
 
-        /* If the ISO state is somehow still zero/invalid, establish a valid
-         * manual gain before trying to meter. */
         if (current_iso_raw < AUTO_ISO_MIN_RAW || current_iso_raw > 120)
             goto cleanup;
 
