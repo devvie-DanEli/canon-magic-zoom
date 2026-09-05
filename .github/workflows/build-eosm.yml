@@ -1,10 +1,10 @@
-name: Build EOS M Auto ISO
-run-name: Build EOS M Auto ISO
+name: Build EOS M Auto ISO RAW Meter
+run-name: Build EOS M Auto ISO RAW Meter
 
 on:
   push:
     branches:
-      - feature/eosm-auto-iso
+      - feature/eosm-auto-iso-raw-meter
   workflow_dispatch: {}
 
 jobs:
@@ -16,14 +16,14 @@ jobs:
         with:
           ref: feature/eosm-photo-touch-profiles
 
-      - name: Overlay current EOS M branch sources
+      - name: Overlay current EOS M RAW-meter branch sources
         run: |
           set -euo pipefail
-          git fetch origin feature/eosm-auto-iso
+          git fetch origin feature/eosm-auto-iso-raw-meter
           for f in modules/photoctl/photoctl.c modules/auto_iso/auto_iso.c modules/auto_iso/Makefile modules/Makefile.modules.user src/expo_mode_sep.c src/expo_mode_sep.h; do
             echo "Overlaying $f"
             mkdir -p "$(dirname "$f")"
-            git show "origin/feature/eosm-auto-iso:$f" > "$f"
+            git show "origin/feature/eosm-auto-iso-raw-meter:$f" > "$f"
             test -s "$f"
           done
 
@@ -151,7 +151,7 @@ jobs:
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: eosm-auto-iso-build
+          name: eosm-auto-iso-raw-meter-build
           path: |
             platform/EOSM.202/autoexec.bin
             platform/EOSM.202/*.zip
