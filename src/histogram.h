@@ -52,6 +52,11 @@ int raw_hist_get_percentile_level(int percentile, int gray_projection, int speed
 int raw_hist_get_percentile_levels(int* percentiles_x10, int* output_raw_values, int n, int gray_projection, int speed);
 int raw_hist_get_overexposure_percentage(int gray_projection);
 
+/* Compact RAW meter for control loops such as Auto ISO. Unlike the legacy
+ * percentile API, this uses a small fixed 512-bin histogram and performs no
+ * heap allocation. */
+int raw_meter_get_percentile_level(int percentile_x10, int gray_projection, int speed);
+
 extern struct menu_entry hist_menu_entry;
 
 extern int hist_type;
