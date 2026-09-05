@@ -20,7 +20,7 @@ jobs:
         run: |
           set -euo pipefail
           git fetch origin feature/eosm-auto-iso-raw-meter
-          for f in modules/photoctl/photoctl.c modules/auto_iso/auto_iso.c modules/auto_iso/Makefile modules/Makefile.modules.user src/expo_mode_sep.c src/expo_mode_sep.h src/histogram.h src/raw_meter.c; do
+          for f in modules/photoctl/photoctl.c modules/auto_iso/auto_iso.c modules/auto_iso/Makefile modules/Makefile.modules.user src/expo_mode_sep.c src/expo_mode_sep.h src/histogram.h src/raw_meter.c src/eosm_auto_iso_lv.c; do
             echo "Overlaying $f"
             mkdir -p "$(dirname "$f")"
             git show "origin/feature/eosm-auto-iso-raw-meter:$f" > "$f"
@@ -40,6 +40,25 @@ jobs:
               printf '#define MODULE_STRINGS() \\\n    MODULE_STRINGS_START() \\\n    MODULE_STRINGS_END()\n' > "${dir}module_strings.h"
             fi
           done
+
+      - name: Enable RAW meter and Auto ISO core sources
+        run: |
+          set -euo pipefail
+          python2 - <<'PY'
+          from __future__ import print_function
+
+          path = 'src/Makefile.src'
+          data = open(path, 'r').read()
+          old = '\thistogram.o \\\n'
+          new = '\thistogram.o \\\n\traw_meter.o \\\n\teosm_auto_iso_lv.o \\\n'
+          if old not in data:
+              raise SystemExit('EOS M patch: histogram object anchor missing')
+          if 'raw_meter.o' not in data:
+              data = data.replace(old, new, 1)
+          if 'eosm_auto_iso_lv.o' not in data:
+              data = data.replace('\thistogram.o \\\n', '\thistogram.o \\\n\traw_meter.o \\\n\teosm_auto_iso_lv.o \\\n', 1)
+          open(path, 'w').write(data)
+          PY
 
       - name: Enable Photo control and Auto ISO modules
         run: |
@@ -79,16 +98,9 @@ jobs:
               '#endif\n',
               'exposure separation shoot-task hook'
           )
-
-          replace_once(
-              'src/Makefile.src',
-              '\tpowersave.o \\\n',
-              '\tpowersave.o \\\n\texpo_mode_sep.o \\\n',
-              'exposure separation object'
-          )
           PY
 
-      - name: Apply photo+movie touch separation context
+      - name: Apply Photo+Movie touch separation and Auto ISO LiveView toggle
         run: |
           set -euo pipefail
           python2 - <<'PY'
@@ -99,6 +111,44 @@ jobs:
               if old not in data:
                   raise SystemExit('EOS M patch: missing ' + label)
               open(path, 'w').write(data.replace(old, new, 1))
+
+          replace_once(
+              'src/gui-common.c',
+              'static int (*dual_iso_slim_step_recovery)(int) =\n'
+              '    MODULE_FUNCTION(dual_iso_slim_step_recovery);\n',
+              'static int (*dual_iso_slim_step_recovery)(int) =\n'
+              '    MODULE_FUNCTION(dual_iso_slim_step_recovery);\n'
+              'static int (*eosm_auto_iso_set_from_touch)(int) =\n'
+              '    MODULE_FUNCTION(eosm_auto_iso_set_from_touch);\n'
+              'static int (*eosm_auto_iso_is_enabled)(void) =\n'
+              '    MODULE_FUNCTION(eosm_auto_iso_is_enabled);\n',
+              'Auto ISO touch module hooks'
+          )
+
+          replace_once(
+              'src/gui-common.c',
+              '        if (!lvinfo_touch_editor_hit_test(x, y, &slot, &arrow))\n'
+              '            lvinfo_touch_editor_close();\n'
+              '        else if (arrow && slot >= 0)\n'
+              '            slim_touch_lv_change_field(field, slot, arrow);\n',
+              '        if (!lvinfo_touch_editor_hit_test(x, y, &slot, &arrow))\n'
+              '            lvinfo_touch_editor_close();\n'
+              '        else if (field == LVINFO_TOUCH_ISO && slot >= 0 && !arrow)\n'
+              '        {\n'
+              '            /* Center-tap on the ISO editor toggles Auto ISO; the\n'
+              '             * arrows retain their normal manual ISO function. */\n'
+              '            if (eosm_auto_iso_set_from_touch)\n'
+              '            {\n'
+              '                int enabled = eosm_auto_iso_is_enabled &&\n'
+              '                              eosm_auto_iso_is_enabled();\n'
+              '                eosm_auto_iso_set_from_touch(enabled ? -1 : 1);\n'
+              '            }\n'
+              '            lvinfo_touch_editor_close();\n'
+              '        }\n'
+              '        else if (arrow && slot >= 0)\n'
+              '            slim_touch_lv_change_field(field, slot, arrow);\n',
+              'Auto ISO center-tap toggle'
+          )
 
           replace_once(
               'src/gui-common.c',
@@ -145,8 +195,12 @@ jobs:
           set -euo pipefail
           ls -lh platform/EOSM.202/*.bin platform/EOSM.202/*.zip
           zipfile=$(ls platform/EOSM.202/magiclantern-*.zip | head -n1)
+          echo "Checking required Auto ISO and companion modules..."
           unzip -l "$zipfile" | grep -E 'ML/modules/(auto_iso|photoctl|crop_rec|dual_iso)\.mo'
+          echo "Checking MLV playback/audio modules..."
           unzip -l "$zipfile" | grep -E 'ML/modules/mlv_(lite|play|snd)\.mo'
+          echo "Checking Auto ISO package presence explicitly..."
+          unzip -l "$zipfile" | grep -q 'ML/modules/auto_iso\.mo'
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
