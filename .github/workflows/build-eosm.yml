@@ -26,6 +26,12 @@ jobs:
             test -s "$f"
           done
 
+      - name: Install Python 2 + Python 3 Docutils
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python2 python3-docutils
+          sudo ln -sf /usr/bin/python2 /usr/local/bin/python
+
       - name: Generate placeholder module info
         run: |
           set -euo pipefail
