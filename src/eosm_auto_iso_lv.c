@@ -1,11 +1,16 @@
 #include <dryos.h>
+#include <property.h>
+#include <bmp.h>
 #include <lvinfo.h>
 #include <module.h>
 
 #ifdef CONFIG_SLIM_MENUS
 
-/* The Auto ISO controller remains a module. This core-side LVInfo item only
- * mirrors its state and gives the user a visible LiveView control surface. */
+/*
+ * Core-side LiveView indicator for the EOS M Auto ISO module.
+ * The Auto ISO controller itself remains a module; this item only mirrors
+ * its state in the LiveView info bar.
+ */
 static int (*eosm_auto_iso_is_enabled)(void) =
     MODULE_FUNCTION(eosm_auto_iso_is_enabled);
 static int (*eosm_auto_iso_is_locked)(void) =
@@ -15,7 +20,7 @@ static LVINFO_UPDATE_FUNC(eosm_auto_iso_lv_update)
 {
     LVINFO_BUFFER(16);
 
-    if (!lv || !is_movie_mode())
+    if (!is_movie_mode())
     {
         item->value = 0;
         item->width = 0;
@@ -49,11 +54,12 @@ static struct lvinfo_item eosm_auto_iso_lv_item = {
     .priority = 2,
 };
 
-static void eosm_auto_iso_lv_init(void)
+static void eosm_auto_iso_lv_init(void *unused)
 {
+    (void)unused;
     lvinfo_add_item(&eosm_auto_iso_lv_item);
 }
 
-INIT_FUNC("eosm_auto_iso_lv", eosm_auto_iso_lv_init)
+INIT_FUNC("eosm_auto_iso_lv", eosm_auto_iso_lv_init);
 
 #endif /* CONFIG_SLIM_MENUS */
