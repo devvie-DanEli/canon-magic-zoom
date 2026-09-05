@@ -7,37 +7,33 @@
 #include <lvinfo.h>
 #include <module.h>
 #include <shoot.h>
+#include <raw.h>
+#include <histogram.h>
+#include <math.h>
 
 /*
- * EOS M Auto ISO
+ * EOS M Auto ISO for Movie / RAW LiveView.
  *
- * DISABLED: continuous Auto ISO is not reliable on EOS M Crop Mood / RAW
- * recording (same practical limitation as Danne builds). Module is kept in
- * tree for reference but is not built (removed from ML_MODULES) and
- * auto_iso_supported() always returns 0.
- *
- * The previous implementation only requested Canon's native Movie Auto ISO
- * state (PROP_ISO == 0). On EOS M 2.0.2 that state can remain at one ISO
- * value while recording RAW. We therefore calculate the ISO required by
- * Canon's exposure meter and control ISO directly.
+ * Canon's native Movie Auto ISO path was found to hold one value while the
+ * EOS M is recording RAW, so this module controls ISO directly. The meter is
+ * derived from the existing RAW histogram percentile scanner, which already
+ * operates on the LiveView RAW buffer used by the Crop Mood pipeline.
  *
  * Shutter and aperture remain user-controlled. ISO is the only parameter
- * changed by this module.
+ * changed by this controller.
  */
 
-#define AUTO_ISO_MAX_CHOICES 5
+#define AUTO_ISO_MAX_CHOICES       5
 static const uint8_t auto_iso_max_raw[AUTO_ISO_MAX_CHOICES] = { 88, 96, 104, 112, 120 };
 static const char *auto_iso_max_labels[AUTO_ISO_MAX_CHOICES] = { "400", "800", "1600", "3200", "6400" };
 
-#define AUTO_ISO_MIN_RAW 72
-#define AUTO_ISO_TARGET_BV 0
-#define AUTO_ISO_DEADBAND 2
-#define AUTO_ISO_UPDATE_TICKS 3
-
-#define RAW2TV(raw) APEX_TV(raw) * 10 / 8
-#define RAW2AV(raw) APEX_AV(raw) * 10 / 8
-#define RAW2EC(raw) raw * 10 / 8
-#define SV2RAW(apex) -APEX_SV(-(apex) * 100 / 125)
+#define AUTO_ISO_MIN_RAW           72       /* ISO 100 */
+#define AUTO_ISO_TARGET_EV         (-2.50f) /* median target, relative to RAW white */
+#define AUTO_ISO_PERCENTILE_X10    500      /* 50th percentile */
+#define AUTO_ISO_SCAN_SPEED        8        /* fast RAW percentile scan */
+#define AUTO_ISO_UPDATE_TICKS      8
+#define AUTO_ISO_DEADBAND_RAW      2        /* 1/4 stop */
+#define AUTO_ISO_MAX_STEP_RAW      8        /* never jump more than 1 EV/update */
 
 static CONFIG_INT("eosm.auto_iso", eosm_auto_iso_enabled_config, 0);
 static CONFIG_INT("eosm.auto_iso.max", eosm_auto_iso_max_index, 4);
@@ -56,10 +52,9 @@ static int auto_iso_set_enabled(int enabled);
 
 static int auto_iso_supported(void)
 {
-    /* Disabled: continuous Auto ISO is not reliable on EOS M Crop Mood /
-     * RAW recording (same practical limitation as Danne builds). */
-    (void)auto_iso_supported_cache;
-    return 0;
+    if (auto_iso_supported_cache < 0)
+        auto_iso_supported_cache = is_camera("EOSM", "2.0.2");
+    return auto_iso_supported_cache;
 }
 
 static int auto_iso_dual_enabled(void)
@@ -105,33 +100,43 @@ static void auto_iso_disable_and_restore_manual(void)
 }
 
 /*
- * Magic Lantern's historical Auto Exposure module derives:
- *     BV = TV + AV - SV + EC
- * and uses get_ae_value() as the exposure-error term in M mode.
- * Holding BV at zero with fixed TV and AV therefore gives:
- *     SV = TV + AV + EC
+ * The RAW histogram API returns an actual sensor-code sample. Converting that
+ * sample to EV lets us measure how far the median image brightness is from a
+ * fixed target. Since shutter and aperture stay fixed, the correction can be
+ * applied directly to ISO at 8 raw ISO codes per EV.
  */
-static int auto_iso_calculate_target_raw(void)
+static int auto_iso_calculate_target_raw(int current_iso_raw)
 {
-    if (!lens_info.raw_shutter || !lens_info.raw_aperture)
-        return lens_info.raw_iso ? lens_info.raw_iso : AUTO_ISO_MIN_RAW;
+    int raw_level = raw_hist_get_percentile_level(
+        AUTO_ISO_PERCENTILE_X10,
+        GRAY_PROJECTION_GREEN,
+        AUTO_ISO_SCAN_SPEED
+    );
 
-    int ae_value = get_ae_value();
-    int sv = RAW2TV(lens_info.raw_shutter)
-           + RAW2AV(lens_info.raw_aperture)
-           + RAW2EC(ae_value);
+    if (raw_level <= 0)
+        return -1;
 
-    return SV2RAW(sv);
+    float measured_ev = raw_to_ev(raw_level);
+    float correction_ev = AUTO_ISO_TARGET_EV - measured_ev;
+    int delta_raw = (int)roundf(correction_ev * 8.0f);
+
+    /* Limit a single controller step so one noisy frame cannot cause a large jump. */
+    delta_raw = COERCE(delta_raw, -AUTO_ISO_MAX_STEP_RAW, AUTO_ISO_MAX_STEP_RAW);
+
+    return current_iso_raw + delta_raw;
 }
 
-static int auto_iso_choose_raw(int target_raw)
+static int auto_iso_choose_raw(int target_raw, int current_iso_raw)
 {
     int max_raw = auto_iso_max_raw_value();
     target_raw = COERCE(target_raw, AUTO_ISO_MIN_RAW, max_raw);
 
     if (auto_iso_last_applied_raw >= 0 &&
-        ABS(target_raw - auto_iso_last_applied_raw) < AUTO_ISO_DEADBAND)
+        ABS(target_raw - auto_iso_last_applied_raw) < AUTO_ISO_DEADBAND_RAW)
         return auto_iso_last_applied_raw;
+
+    if (ABS(target_raw - current_iso_raw) < AUTO_ISO_DEADBAND_RAW)
+        return current_iso_raw;
 
     return target_raw;
 }
@@ -143,25 +148,42 @@ static void auto_iso_task(void *unused)
 
     if (!auto_iso_supported() || !eosm_auto_iso_enabled_config ||
         !is_movie_mode() || auto_iso_dual_enabled() ||
-        shooting_mode != SHOOTMODE_M || !lens_info.raw_shutter ||
-        !lens_info.raw_aperture)
+        shooting_mode != SHOOTMODE_M || !lv || !RECORDING_RAW ||
+        !lens_info.raw_shutter || !lens_info.raw_aperture)
         goto cleanup;
 
-    int target_raw = auto_iso_calculate_target_raw();
-    int chosen_raw = auto_iso_choose_raw(target_raw);
-    int max_raw = auto_iso_max_raw_value();
-
-    /* Hard gain ceiling. Never allow the controller above the user's limit. */
-    chosen_raw = COERCE(chosen_raw, AUTO_ISO_MIN_RAW, max_raw);
-
-    auto_iso_last_target_raw = target_raw;
-
-    if (chosen_raw != auto_iso_last_applied_raw)
     {
-        if (lens_set_rawiso(chosen_raw))
-            auto_iso_last_applied_raw = chosen_raw;
+        int current_iso_raw = lens_info.raw_iso;
+        if (current_iso_raw < AUTO_ISO_MIN_RAW || current_iso_raw > 120)
+            current_iso_raw = auto_iso_last_manual();
+
+        /* If the ISO state is somehow still zero/invalid, establish a valid
+         * manual gain before trying to meter. */
+        if (current_iso_raw < AUTO_ISO_MIN_RAW || current_iso_raw > 120)
+            goto cleanup;
+
+        int target_raw = auto_iso_calculate_target_raw(current_iso_raw);
+        if (target_raw < 0)
+            goto cleanup;
+
+        int chosen_raw = auto_iso_choose_raw(target_raw, current_iso_raw);
+        int max_raw = auto_iso_max_raw_value();
+
+        /* Hard gain ceiling. Applied immediately before every ISO write. */
+        chosen_raw = COERCE(chosen_raw, AUTO_ISO_MIN_RAW, max_raw);
+        auto_iso_last_target_raw = target_raw;
+
+        if (chosen_raw != current_iso_raw)
+        {
+            if (lens_set_rawiso(chosen_raw))
+                auto_iso_last_applied_raw = chosen_raw;
+            else
+                auto_iso_last_applied_raw = -1;
+        }
         else
-            auto_iso_last_applied_raw = -1;
+        {
+            auto_iso_last_applied_raw = current_iso_raw;
+        }
     }
 
 cleanup:
@@ -190,6 +212,9 @@ static unsigned int auto_iso_shoot_task(unsigned int unused)
     }
 
     dual_iso_prev = 0;
+
+    if (!RECORDING_RAW || !lv || shooting_mode != SHOOTMODE_M)
+        return CBR_RET_CONTINUE;
 
     if (++auto_iso_tick < AUTO_ISO_UPDATE_TICKS)
         return CBR_RET_CONTINUE;
@@ -262,6 +287,8 @@ static int auto_iso_set_enabled(int enabled)
     if (enabled)
     {
         auto_iso_track_manual_iso();
+        if (auto_iso_last_manual() < AUTO_ISO_MIN_RAW)
+            return 0;
         auto_iso_reset_controller();
         eosm_auto_iso_enabled_config = 1;
         lens_display_set_dirty();
@@ -325,8 +352,8 @@ static struct menu_entry auto_iso_menu[] = {
             },
             MENU_EOL,
         },
-        .help = "Magic Lantern Auto ISO for EOS M Movie mode.",
-        .help2 = "Adjusts ISO only; shutter and aperture stay fixed. Dual ISO disables it.",
+        .help = "RAW-histogram Auto ISO for EOS M Movie mode.",
+        .help2 = "Adjusts ISO only during RAW recording; shutter and aperture stay fixed.",
     },
 };
 
