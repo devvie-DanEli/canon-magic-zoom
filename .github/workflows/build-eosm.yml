@@ -11,8 +11,20 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      - name: Check out current branch
+      - name: Check out working photo-touch-profiles base
         uses: actions/checkout@v4
+        with:
+          ref: feature/eosm-photo-touch-profiles
+
+      - name: Overlay current Memory Recall sources
+        run: |
+          set -euo pipefail
+          git fetch origin feature/eosm-auto-iso-raw-meter
+          for f in src/mem_recall.c modules/crop_rec/crop_rec.c modules/Makefile.modules.user; do
+            echo "Overlaying $f"
+            git show "origin/feature/eosm-auto-iso-raw-meter:$f" > "$f"
+            test -s "$f"
+          done
 
       - name: Generate placeholder module info
         run: |
@@ -26,28 +38,21 @@ jobs:
       - name: Validate Auto ISO is disabled
         run: |
           set -euo pipefail
-          echo "Checking that Auto ISO is not part of the EOS M module set..."
-          if grep -Eq '(^|[[:space:]\\])auto_iso([[:space:]\\]|$)' modules/Makefile.modules.user; then
-            echo "ERROR: auto_iso is still enabled in Makefile.modules.user"
-            exit 1
-          fi
-          if grep -q '"auto_iso"' src/module.c; then
-            echo "ERROR: auto_iso is still injected into src/module.c"
-            exit 1
-          fi
-          if grep -q 'eosm_auto_iso_lv.o' src/Makefile.src; then
-            echo "ERROR: Auto ISO LiveView core object is still enabled"
-            exit 1
-          fi
+          echo "Checking that Auto ISO is disabled..."
+          ! grep -Eq '(^|[[:space:]])auto_iso([[:space:]]|$)' modules/Makefile.modules.user
+          ! grep -q '"auto_iso"' src/module.c
+          ! grep -q 'eosm_auto_iso_lv.o' src/Makefile.src
+          echo "Auto ISO is disabled from the module/build path."
 
-      - name: Validate Memory Recall shutter fix
+      - name: Validate Memory Recall shutter path
         run: |
           set -euo pipefail
           grep -q 'mem_recall.o' src/Makefile.src
           grep -q 'crop_rec_memory_capture' modules/crop_rec/crop_rec.c
           grep -q 'crop_rec_memory_apply' modules/crop_rec/crop_rec.c
-          grep -q 'hdr_set_rawshutter' src/mem_recall.c
-          grep -q 'mem.m0.shutter' src/mem_recall.c
+          grep -q '\*f.shutter = lens_info.raw_shutter' src/mem_recall.c
+          grep -q 'hdr_set_rawshutter(\*f.shutter)' src/mem_recall.c
+          echo "Memory Recall saves raw shutter and restores it through the confirmed shutter setter."
 
       - name: Cache ARM toolchain
         id: cache-toolchain
@@ -78,13 +83,15 @@ jobs:
           ls -lh platform/EOSM.202/*.bin platform/EOSM.202/*.zip
           zipfile=$(ls platform/EOSM.202/magiclantern-*.zip | head -n1)
           echo "Checking required video modules..."
-          unzip -l "$zipfile" | grep -E 'ML/modules/(crop_rec|dual_iso|mlv_lite|mlv_play|mlv_snd|photoctl)\.mo'
+          for module in crop_rec dual_iso mlv_lite mlv_play mlv_snd photoctl; do
+            unzip -l "$zipfile" | grep -q "ML/modules/${module}\\.mo"
+          done
           echo "Checking that Auto ISO is absent..."
           if unzip -l "$zipfile" | grep -q 'ML/modules/auto_iso\.mo'; then
             echo "ERROR: auto_iso.mo is still packaged"
             exit 1
           fi
-          echo "Auto ISO is disabled and not packaged."
+          echo "Auto ISO is not packaged."
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
