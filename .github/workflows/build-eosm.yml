@@ -41,7 +41,7 @@ jobs:
             fi
           done
 
-      - name: Enable RAW meter and Auto ISO core sources
+      - name: Enable EOS M Auto ISO core LV item
         run: |
           set -euo pipefail
           python2 - <<'PY'
@@ -49,13 +49,12 @@ jobs:
 
           path = 'src/Makefile.src'
           data = open(path, 'r').read()
-          old = '\thistogram.o \\\n'
-          new = '\thistogram.o \\\n\traw_meter.o \\\n\teosm_auto_iso_lv.o \\\n'
-          if old not in data:
+          anchor = '\thistogram.o \\\n'
+          object_line = '\teosm_auto_iso_lv.o \\\n'
+          if anchor not in data:
               raise SystemExit('EOS M patch: histogram object anchor missing')
-          if 'raw_meter.o' in data or 'eosm_auto_iso_lv.o' in data:
-              raise SystemExit('EOS M patch: RAW meter objects already present unexpectedly')
-          data = data.replace(old, new, 1)
+          if object_line not in data:
+              data = data.replace(anchor, anchor + object_line, 1)
           open(path, 'w').write(data)
           PY
 
