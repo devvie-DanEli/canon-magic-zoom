@@ -16,11 +16,11 @@ jobs:
         with:
           ref: feature/eosm-photo-touch-profiles
 
-      - name: Overlay current EOS M RAW-meter branch sources
+      - name: Overlay Auto ISO RAW-meter sources
         run: |
           set -euo pipefail
           git fetch origin feature/eosm-auto-iso-raw-meter
-          for f in modules/photoctl/photoctl.c modules/auto_iso/auto_iso.c modules/auto_iso/Makefile modules/Makefile.modules.user src/expo_mode_sep.c src/expo_mode_sep.h src/histogram.h src/raw_meter.c src/eosm_auto_iso_lv.c; do
+          for f in modules/auto_iso/auto_iso.c modules/auto_iso/Makefile modules/Makefile.modules.user src/histogram.h src/eosm_auto_iso_lv.c; do
             echo "Overlaying $f"
             mkdir -p "$(dirname "$f")"
             git show "origin/feature/eosm-auto-iso-raw-meter:$f" > "$f"
@@ -41,7 +41,7 @@ jobs:
             fi
           done
 
-      - name: Enable EOS M Auto ISO core LV item
+      - name: Enable Auto ISO LiveView core item
         run: |
           set -euo pipefail
           python2 - <<'PY'
@@ -58,83 +58,48 @@ jobs:
           open(path, 'w').write(data)
           PY
 
-      - name: Enable Photo control and Auto ISO modules
+      - name: Enable Auto ISO module
         run: |
           set -euo pipefail
-          grep -q '"photoctl"' src/module.c || \
-            sed -i 's/"hdmi_out"};/"hdmi_out", "photoctl"};/' src/module.c
           grep -q '"auto_iso"' src/module.c || \
-            sed -i 's/"photoctl"};/"photoctl", "auto_iso"};/' src/module.c
+            sed -i 's/"hdmi_out"};/"hdmi_out", "auto_iso"};/' src/module.c
 
-      - name: Integrate exposure separation into shoot task
+      - name: Enable Auto ISO touch integration
         run: |
           set -euo pipefail
           python2 - <<'PY'
           from __future__ import print_function
 
-          def replace_once(path, old, new, label):
-              data = open(path, 'r').read()
-              if old not in data:
-                  raise SystemExit('EOS M patch: missing ' + label)
-              data = data.replace(old, new, 1)
-              open(path, 'w').write(data)
+          path = 'src/gui-common.c'
+          data = open(path, 'r').read()
 
-          replace_once(
-              'src/shoot.c',
-              '#include "powersave.h"\n',
-              '#include "powersave.h"\n#include "expo_mode_sep.h"\n',
-              'exposure separation header'
-          )
-
-          replace_once(
-              'src/shoot.c',
-              '#if defined(CONFIG_MODULES)\n        module_exec_cbr(CBR_SHOOT_TASK);\n#endif\n',
-              '        expo_sep_update();\n'
-              '        expo_sep_apply_deferred();\n\n'
-              '#if defined(CONFIG_MODULES)\n'
-              '        module_exec_cbr(CBR_SHOOT_TASK);\n'
-              '#endif\n',
-              'exposure separation shoot-task hook'
-          )
-          PY
-
-      - name: Apply Photo+Movie touch separation and Auto ISO LiveView toggle
-        run: |
-          set -euo pipefail
-          python2 - <<'PY'
-          from __future__ import print_function
-
-          def replace_once(path, old, new, label):
-              data = open(path, 'r').read()
-              if old not in data:
-                  raise SystemExit('EOS M patch: missing ' + label)
-              open(path, 'w').write(data.replace(old, new, 1))
-
-          replace_once(
-              'src/gui-common.c',
-              'static int (*dual_iso_slim_step_recovery)(int) =\n'
-              '    MODULE_FUNCTION(dual_iso_slim_step_recovery);\n',
+          anchor = (
               'static int (*dual_iso_slim_step_recovery)(int) =\n'
               '    MODULE_FUNCTION(dual_iso_slim_step_recovery);\n'
+          )
+          hooks = (
               'static int (*eosm_auto_iso_set_from_touch)(int) =\n'
               '    MODULE_FUNCTION(eosm_auto_iso_set_from_touch);\n'
               'static int (*eosm_auto_iso_is_enabled)(void) =\n'
-              '    MODULE_FUNCTION(eosm_auto_iso_is_enabled);\n',
-              'Auto ISO touch module hooks'
+              '    MODULE_FUNCTION(eosm_auto_iso_is_enabled);\n'
           )
+          if anchor not in data:
+              raise SystemExit('EOS M patch: Auto ISO hook anchor missing')
+          if 'eosm_auto_iso_set_from_touch' not in data:
+              data = data.replace(anchor, anchor + hooks, 1)
 
-          replace_once(
-              'src/gui-common.c',
+          old = (
               '        if (!lvinfo_touch_editor_hit_test(x, y, &slot, &arrow))\n'
               '            lvinfo_touch_editor_close();\n'
               '        else if (arrow && slot >= 0)\n'
-              '            slim_touch_lv_change_field(field, slot, arrow);\n',
+              '            slim_touch_lv_change_field(field, slot, arrow);\n'
+          )
+          new = (
               '        if (!lvinfo_touch_editor_hit_test(x, y, &slot, &arrow))\n'
               '            lvinfo_touch_editor_close();\n'
               '        else if (field == LVINFO_TOUCH_ISO && slot >= 0 && !arrow)\n'
               '        {\n'
-              '            /* Center-tap on the ISO editor toggles Auto ISO; the\n'
-              '             * arrows retain their normal manual ISO function. */\n'
+              '            /* Center-tap toggles Auto ISO; arrows remain manual ISO. */\n'
               '            if (eosm_auto_iso_set_from_touch)\n'
               '            {\n'
               '                int enabled = eosm_auto_iso_is_enabled &&\n'
@@ -144,33 +109,21 @@ jobs:
               '            lvinfo_touch_editor_close();\n'
               '        }\n'
               '        else if (arrow && slot >= 0)\n'
-              '            slim_touch_lv_change_field(field, slot, arrow);\n',
-              'Auto ISO center-tap toggle'
+              '            slim_touch_lv_change_field(field, slot, arrow);\n'
           )
-
-          replace_once(
-              'src/gui-common.c',
-              'static int slim_touch_lv_context_ok(void)\n'
-              '{\n'
-              '    return lv && is_movie_mode() && !RECORDING &&\n'
-              '           !gui_menu_shown() && lv_dispsize != 10 &&\n'
-              '           !slim_crop_rec_transition_busy();\n'
-              '}\n',
-              'static int slim_touch_lv_context_ok(void)\n'
-              '{\n'
-              '    return lv && !RECORDING && !gui_menu_shown() &&\n'
-              '           lv_dispsize != 10 && !slim_crop_rec_transition_busy();\n'
-              '}\n',
-              'shared Photo/Movie LV editor context'
-          )
+          if old not in data:
+              raise SystemExit('EOS M patch: ISO touch editor anchor missing')
+          data = data.replace(old, new, 1)
+          open(path, 'w').write(data)
           PY
 
-      - name: Validate patched Auto ISO sources
+      - name: Validate Auto ISO sources
         run: |
           set -euo pipefail
+          grep -q 'raw_hist_get_percentile_level' modules/auto_iso/auto_iso.c
+          grep -q 'AUTO ISOMax' modules/auto_iso/auto_iso.c || grep -q 'Auto ISO Max' modules/auto_iso/auto_iso.c
           grep -q 'INIT_FUNC("eosm_auto_iso_lv", eosm_auto_iso_lv_init);' src/eosm_auto_iso_lv.c
-          grep -q '#include <property.h>' src/eosm_auto_iso_lv.c
-          grep -q '#include <bmp.h>' src/eosm_auto_iso_lv.c
+          grep -q 'eosm_auto_iso_set_from_touch' src/gui-common.c
           grep -q 'eosm_auto_iso_lv.o' src/Makefile.src
 
       - name: Cache ARM toolchain
@@ -201,12 +154,10 @@ jobs:
           set -euo pipefail
           ls -lh platform/EOSM.202/*.bin platform/EOSM.202/*.zip
           zipfile=$(ls platform/EOSM.202/magiclantern-*.zip | head -n1)
-          echo "Checking required Auto ISO and companion modules..."
-          unzip -l "$zipfile" | grep -E 'ML/modules/(auto_iso|photoctl|crop_rec|dual_iso)\.mo'
-          echo "Checking MLV playback/audio modules..."
-          unzip -l "$zipfile" | grep -E 'ML/modules/mlv_(lite|play|snd)\.mo'
-          echo "Checking Auto ISO package presence explicitly..."
+          echo "Checking Auto ISO module presence..."
           unzip -l "$zipfile" | grep -q 'ML/modules/auto_iso\.mo'
+          echo "Checking companion modules..."
+          unzip -l "$zipfile" | grep -E 'ML/modules/(crop_rec|dual_iso|mlv_lite|mlv_play|mlv_snd)\.mo'
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
