@@ -165,6 +165,14 @@ jobs:
           )
           PY
 
+      - name: Validate patched Auto ISO sources
+        run: |
+          set -euo pipefail
+          grep -q 'INIT_FUNC("eosm_auto_iso_lv", eosm_auto_iso_lv_init);' src/eosm_auto_iso_lv.c
+          grep -q '#include <property.h>' src/eosm_auto_iso_lv.c
+          grep -q '#include <bmp.h>' src/eosm_auto_iso_lv.c
+          grep -q 'eosm_auto_iso_lv.o' src/Makefile.src
+
       - name: Cache ARM toolchain
         id: cache-toolchain
         uses: actions/cache@v4
