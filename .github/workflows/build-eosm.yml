@@ -20,7 +20,7 @@ jobs:
         run: |
           set -euo pipefail
           git fetch origin feature/eosm-auto-iso-raw-meter
-          for f in modules/photoctl/photoctl.c modules/auto_iso/auto_iso.c modules/auto_iso/Makefile modules/Makefile.modules.user src/expo_mode_sep.c src/expo_mode_sep.h; do
+          for f in modules/photoctl/photoctl.c modules/auto_iso/auto_iso.c modules/auto_iso/Makefile modules/Makefile.modules.user src/expo_mode_sep.c src/expo_mode_sep.h src/histogram.h src/raw_meter.c; do
             echo "Overlaying $f"
             mkdir -p "$(dirname "$f")"
             git show "origin/feature/eosm-auto-iso-raw-meter:$f" > "$f"
