@@ -14,12 +14,6 @@ jobs:
       - name: Check out current branch
         uses: actions/checkout@v4
 
-      - name: Install Python 2 + Python 3 Docutils
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y python2 python3-docutils
-          sudo ln -sf /usr/bin/python2 /usr/local/bin/python
-
       - name: Generate placeholder module info
         run: |
           set -euo pipefail
@@ -33,7 +27,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "Checking that Auto ISO is not part of the EOS M module set..."
-          if grep -Eq '^[[:space:]]*auto_iso[[:space:]]*\\?$|[[:space:]]auto_iso$' modules/Makefile.modules.user; then
+          if grep -Eq '(^|[[:space:]\\])auto_iso([[:space:]\\]|$)' modules/Makefile.modules.user; then
             echo "ERROR: auto_iso is still enabled in Makefile.modules.user"
             exit 1
           fi
