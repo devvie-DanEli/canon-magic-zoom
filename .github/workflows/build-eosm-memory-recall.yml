@@ -98,6 +98,7 @@ jobs:
 
           # Two-finger Last Settings stays Movie-only.
           replace_once(
+              'src/gui-common.c',
               '        if (slim_touch_lv_context_ok())\n'
               '        {\n'
               '            /* Keep the existing simultaneous two-finger Last Settings shortcut. */\n'
@@ -117,6 +118,7 @@ jobs:
 
           # Single/double/triple tap launcher stays Movie-only.
           replace_once(
+              'src/gui-common.c',
               'static void slim_touch_open_for_taps(int taps)\n'
               '{\n'
               '    if (!slim_touch_lv_context_ok() || lvinfo_touch_editor_is_open())\n'
@@ -132,6 +134,7 @@ jobs:
           # Memory Recall is modal; auxiliary Movie-only graph touch must not
           # consume Photo-mode field touches.
           replace_once(
+              'src/gui-common.c',
               '    if (monitoring_graph_touch_toggle(x, y))\n'
               '        return 1;\n\n'
               '    if (mem_recall_panel_is_open())\n'
@@ -200,11 +203,6 @@ jobs:
               '    hdr_set_rawshutter(shutter);\n'
               '    lens_display_set_dirty();\n'
               '}\n\n'
-              'PROP_HANDLER(PROP_MVR_REC_START)\n'
-              '{\n'
-              '    if (mem_pending_shutter && is_movie_mode())\n'
-              '        delayed_call(50, mem_recall_apply_pending_shutter, 0);\n'
-              '}\n\n'
               'int mem_recall_load(int slot)\n{\n',
               'Movie-start shutter restore task'
           )
@@ -240,7 +238,6 @@ jobs:
           grep -q 'is_movie_mode() && monitoring_graph_touch_toggle' src/gui-common.c
           grep -q 'return is_movie_mode() && !RECORDING;' src/mem_recall.c
           grep -q 'mem_pending_shutter' src/mem_recall.c
-          grep -q 'PROP_HANDLER(PROP_MVR_REC_START)' src/mem_recall.c
           grep -q 'hdr_set_rawshutter(shutter)' src/mem_recall.c
           if grep -q 'lens_set_rawshutter(*f.shutter)' src/mem_recall.c; then
             echo 'Unsafe direct idle shutter restore still present'
