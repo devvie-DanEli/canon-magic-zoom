@@ -11,8 +11,31 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      - name: Check out Memory Recall branch
+      # Use the exact source base that produced the known-good Actions run
+      # 33932005440. That build was tested for Memory Recall shutter saving.
+      - name: Check out proven photo-touch-profiles base
         uses: actions/checkout@v4
+        with:
+          ref: feature/eosm-photo-touch-profiles
+
+      - name: Overlay proven EOS M Auto ISO branch sources
+        run: |
+          set -euo pipefail
+          git fetch origin feature/eosm-auto-iso
+
+          # photoctl contains independent last-used Photo/Video exposure profiles.
+          git show origin/feature/eosm-auto-iso:modules/photoctl/photoctl.c > /tmp/photoctl.c
+          test -s /tmp/photoctl.c
+          mkdir -p modules/photoctl
+          cp /tmp/photoctl.c modules/photoctl/photoctl.c
+
+          # expo_mode_sep is the core Photo/Movie exposure-separation implementation.
+          git show origin/feature/eosm-auto-iso:src/expo_mode_sep.c > src/expo_mode_sep.c
+          git show origin/feature/eosm-auto-iso:src/expo_mode_sep.h > src/expo_mode_sep.h
+          test -s src/expo_mode_sep.c
+          test -s src/expo_mode_sep.h
+
+          echo 'Using proven Photo/Movie exposure separation sources'
 
       - name: Install Python 2 + Python 3 Docutils
         run: |
@@ -32,7 +55,7 @@ jobs:
             fi
           done
 
-      - name: Apply proven Photo/Movie routing and safe Memory Recall architecture
+      - name: Enable proven Photo control module and exposure separation
         run: |
           set -euo pipefail
           python2 - <<'PY'
@@ -44,9 +67,8 @@ jobs:
                   raise SystemExit('EOS M patch: missing ' + label)
               data = data.replace(old, new, 1)
               open(path, 'w').write(data)
+              print('OK:', label)
 
-          # photoctl must be a core module so the independent Photo/Video
-          # last-used exposure CBR is actually resident in the firmware.
           replace_once(
               'src/module.c',
               'char *core_modules[] = {"mlv_lite", "crop_rec", "mlv_play", "mlv_snd", "sd_uhs", "lua", "file_man", "dual_iso", "silent", "bench", "hdmi_out"};',
@@ -54,8 +76,48 @@ jobs:
               'photoctl core-module autoload'
           )
 
-          # The core LV field editor is shared by Photo and Movie mode. The
-          # Movie-only tap/Quick Screen gesture state machine remains Movie-only.
+          replace_once(
+              'src/shoot.c',
+              '#include "powersave.h"\n',
+              '#include "powersave.h"\n#include "expo_mode_sep.h"\n',
+              'exposure separation header'
+          )
+
+          replace_once(
+              'src/shoot.c',
+              '#if defined(CONFIG_MODULES)\n        module_exec_cbr(CBR_SHOOT_TASK);\n#endif\n',
+              '        expo_sep_update();\n'
+              '        expo_sep_apply_deferred();\n\n'
+              '#if defined(CONFIG_MODULES)\n'
+              '        module_exec_cbr(CBR_SHOOT_TASK);\n'
+              '#endif\n',
+              'exposure separation shoot-task hook'
+          )
+
+          replace_once(
+              'src/Makefile.src',
+              '\tpowersave.o \\\n',
+              '\tpowersave.o \\\n\texpo_mode_sep.o \\\n',
+              'exposure separation object'
+          )
+
+          print('Proven Photo/Video exposure separation integrated')
+          PY
+
+      - name: Apply proven Photo Live View touch routing
+        run: |
+          set -euo pipefail
+          python2 - <<'PY'
+          from __future__ import print_function
+
+          def replace_once(path, old, new, label):
+              data = open(path, 'r').read()
+              if old not in data:
+                  raise SystemExit('EOS M patch: missing ' + label)
+              data = data.replace(old, new, 1)
+              open(path, 'w').write(data)
+              print('OK:', label)
+
           replace_once(
               'src/gui-common.c',
               'static int slim_touch_lv_context_ok(void)\n'
@@ -69,10 +131,22 @@ jobs:
               '    return lv && !RECORDING && !gui_menu_shown() &&\n'
               '           lv_dispsize != 10 && !slim_crop_rec_transition_busy();\n'
               '}\n',
-              'shared Photo/Movie Live View editor context'
+              'shared Photo/Movie LV editor context'
           )
 
-          # After Photo field editing, do not fall through into Movie tap gestures.
+          replace_once(
+              'src/gui-common.c',
+              '    if (monitoring_graph_touch_toggle(x, y))\n'
+              '        return 1;\n\n'
+              '    if (mem_recall_panel_is_open())\n'
+              '        return mem_recall_panel_touch(x, y);\n',
+              '    if (is_movie_mode() && monitoring_graph_touch_toggle(x, y))\n'
+              '        return 1;\n\n'
+              '    if (is_movie_mode() && mem_recall_panel_is_open())\n'
+              '        return mem_recall_panel_touch(x, y);\n',
+              'Movie-only auxiliary touch controls'
+          )
+
           replace_once(
               'src/gui-common.c',
               '            slim_touch_lv_control_consumed = slim_touch_lv_direct_editor(event);\n'
@@ -84,8 +158,6 @@ jobs:
               '                return 0;\n'
               '            if (!is_movie_mode())\n'
               '            {\n'
-              '                /* Photo mode has field-editor touch only. Do not enter\n'
-              '                 * the Movie tap/Quick Screen gesture state machine. */\n'
               '                slim_touch_lv_control_consumed = 1;\n'
               '                slim_touch_lv_pressed = 0;\n'
               '                slim_touch_tap_count = 0;\n'
@@ -96,7 +168,6 @@ jobs:
               'Photo-mode no-fallthrough gate'
           )
 
-          # Two-finger Last Settings stays Movie-only.
           replace_once(
               'src/gui-common.c',
               '        if (slim_touch_lv_context_ok())\n'
@@ -110,13 +181,10 @@ jobs:
               '            /* Keep the existing simultaneous two-finger Last Settings shortcut. */\n'
               '            gui_open_last_menu_selection();\n'
               '            return 0;\n'
-              '        }\n'
-              '        if (slim_touch_lv_context_ok())\n'
-              '            return 0;\n',
-              'Movie-only two-finger gesture'
+              '        }\n',
+              'Movie-only two-finger Last Settings'
           )
 
-          # Single/double/triple tap launcher stays Movie-only.
           replace_once(
               'src/gui-common.c',
               'static void slim_touch_open_for_taps(int taps)\n'
@@ -128,130 +196,26 @@ jobs:
               '    if (!slim_touch_lv_context_ok() || !is_movie_mode() ||\n'
               '        lvinfo_touch_editor_is_open())\n'
               '        return;\n',
-              'Movie-only tap launcher'
+              'Movie-only tap/menu open'
           )
 
-          # Memory Recall is modal; auxiliary Movie-only graph touch must not
-          # consume Photo-mode field touches.
-          replace_once(
-              'src/gui-common.c',
-              '    if (monitoring_graph_touch_toggle(x, y))\n'
-              '        return 1;\n\n'
-              '    if (mem_recall_panel_is_open())\n'
-              '        return mem_recall_panel_touch(x, y);\n',
-              '    if (mem_recall_panel_is_open())\n'
-              '        return mem_recall_panel_touch(x, y);\n\n'
-              '    if (is_movie_mode() && monitoring_graph_touch_toggle(x, y))\n'
-              '        return 1;\n',
-              'Movie-only auxiliary touch controls'
-          )
-
-          # Memory Recall shutter: do not touch the EOS M shutter property while
-          # idle Live View is transitioning. Queue it and apply exactly once after
-          # Movie recording has started. This avoids the repeated idle setter path
-          # that caused the reported camera Error 07 crash.
-          replace_once(
-              'src/mem_recall.c',
-              '#include <module.h>\n'
-              '#include <notify_box.h>\n'
-              '#include <mem_recall.h>\n',
-              '#include <module.h>\n'
-              '#include <notify_box.h>\n'
-              '#include <hdr.h>\n'
-              '#include <mem_recall.h>\n',
-              'Memory Recall shutter API include'
-          )
-
-          replace_once(
-              'src/mem_recall.c',
-              'static int (*crop_rec_memory_apply)(int, int, int, int, int) =\n'
-              '    MODULE_FUNCTION(crop_rec_memory_apply);\n\n'
-              'static int mem_panel_open;\n',
-              'static int (*crop_rec_memory_apply)(int, int, int, int, int) =\n'
-              '    MODULE_FUNCTION(crop_rec_memory_apply);\n\n'
-              '/* EOS M: saved Movie shutter is queued until recording actually starts. */\n'
-              'static int mem_pending_shutter;\n\n'
-              'static int mem_panel_open;\n',
-              'Memory Recall safe shutter state'
-          )
-
-          replace_once(
-              'src/mem_recall.c',
-              'int mem_recall_load(int slot)\n{\n',
-              'static void mem_recall_apply_pending_shutter(int timer, void *opaque)\n'
-              '{\n'
-              '    int shutter;\n'
-              '    (void)timer;\n'
-              '    (void)opaque;\n\n'
-              '    if (!mem_pending_shutter)\n'
-              '        return;\n\n'
-              '    /* Memory Recall is strictly a Movie-mode feature. */\n'
-              '    if (!is_movie_mode() || !lv)\n'
-              '    {\n'
-              '        mem_pending_shutter = 0;\n'
-              '        return;\n'
-              '    }\n\n'
-              '    /* EOS M shutter changes are camera-sensitive in idle LV.\n'
-              '     * Wait for actual recording state, then perform one write only. */\n'
-              '    if (!RECORDING)\n'
-              '    {\n'
-              '        delayed_call(250, mem_recall_apply_pending_shutter, 0);\n'
-              '        return;\n'
-              '    }\n\n'
-              '    shutter = mem_pending_shutter;\n'
-              '    mem_pending_shutter = 0;\n'
-              '    hdr_set_rawshutter(shutter);\n'
-              '    lens_display_set_dirty();\n'
-              '}\n\n'
-              'int mem_recall_load(int slot)\n{\n',
-              'Movie-start shutter restore task'
-          )
-
-          replace_once(
-              'src/mem_recall.c',
-              '    if (*f.iso)\n'
-              '        lens_set_rawiso(*f.iso);\n'
-              '    if (*f.shutter)\n'
-              '        lens_set_rawshutter(*f.shutter);\n'
-              '    if (*f.aperture && lens_info.lens_exists)\n',
-              '    if (*f.iso)\n'
-              '        lens_set_rawiso(*f.iso);\n'
-              '    /* EOS M: defer shutter until Movie recording has started. */\n'
-              '    mem_pending_shutter = *f.shutter;\n'
-              '    if (mem_pending_shutter)\n'
-              '        delayed_call(250, mem_recall_apply_pending_shutter, 0);\n'
-              '    if (*f.aperture && lens_info.lens_exists)\n',
-              'deferred Movie shutter assignment'
-          )
-
-          print('EOS M Photo/Movie touch routing and safe Movie shutter recall patches applied')
+          print('Proven Photo Live View touch routing integrated')
           PY
 
-      - name: Validate fixed architecture before compilation
+      - name: Validate proven architecture before compilation
         run: |
           set -euo pipefail
           grep -q '"photoctl"' src/module.c
+          grep -q 'photoctl.last_photo.shutter' modules/photoctl/photoctl.c
+          grep -q 'photoctl.last_video.shutter' modules/photoctl/photoctl.c
+          grep -q 'expo_sep_update' src/shoot.c
+          grep -q 'expo_sep_apply_deferred' src/shoot.c
+          grep -q 'CONFIG_INT("expo.sep.mv.shutter"' src/expo_mode_sep.c
+          grep -q 'CONFIG_INT("expo.sep.ph.shutter"' src/expo_mode_sep.c
           grep -q 'return lv && !RECORDING && !gui_menu_shown()' src/gui-common.c
-          grep -q 'if (!is_movie_mode())' src/gui-common.c
-          grep -q 'slim_touch_lv_context_ok() && is_movie_mode()' src/gui-common.c
-          grep -q '!slim_touch_lv_context_ok() || !is_movie_mode()' src/gui-common.c
-          grep -q 'is_movie_mode() && monitoring_graph_touch_toggle' src/gui-common.c
           grep -q 'return is_movie_mode() && !RECORDING;' src/mem_recall.c
-          grep -q 'mem_pending_shutter' src/mem_recall.c
-          grep -q 'hdr_set_rawshutter(shutter)' src/mem_recall.c
-          if grep -q 'lens_set_rawshutter(*f.shutter)' src/mem_recall.c; then
-            echo 'Unsafe direct idle shutter restore still present'
-            exit 1
-          fi
-          if grep -q 'crop_rec_lv_transition_busy' src/mem_recall.c; then
-            echo 'Old repeated transition/shutter retry path still present'
-            exit 1
-          fi
-          if grep -Eq '(^|[[:space:]])auto_iso([[:space:]]|$)' modules/Makefile.modules.user; then
-            echo 'Auto ISO must remain disabled'
-            exit 1
-          fi
-          echo 'Photo touch, Photo/Video profile separation, and safe Movie-only Memory Recall shutter architecture validated.'
+          grep -q 'if (\*f.shutter)' src/mem_recall.c
+          echo 'Proven build base validated: Photo touch + separate Photo/Movie exposure memory + direct Memory Recall shutter restore.'
 
       - name: Cache ARM toolchain
         id: cache-toolchain
