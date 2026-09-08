@@ -36,15 +36,6 @@ jobs:
               gui = gui.sub(marker, declarations)
               File.write('src/gui-common.c', gui)
           end
-
-          zebra = File.read('src/zebra.c')
-          old_block = "    if (!lv) return 0;\n    if (!zoom_overlay_enabled) return 0;\n    if (!zebra_should_run()) return 0;\n    if (EXT_MONITOR_RCA) return 0;\n"
-          new_block = "    if (!lv) return 0;\n    if (!zoom_overlay_enabled) return 0;\n#ifdef CONFIG_EOSM\n    if (!get_global_draw()) return 0;\n#else\n    if (!zebra_should_run()) return 0;\n#endif\n    if (EXT_MONITOR_RCA) return 0;\n"
-          unless zebra.include?(new_block)
-              abort 'Unable to locate Magic Zoom draw gate in zebra.c' unless zebra.include?(old_block)
-              zebra = zebra.sub(old_block, new_block)
-              File.write('src/zebra.c', zebra)
-          end
           RUBY
 
       - name: Install Python 2 + Python 3 Docutils
