@@ -1,0 +1,149 @@
+name: Build EOS M Magic Zoom Touch
+run-name: Build EOS M Magic Zoom Touch
+
+on:
+  push:
+    branches:
+      - feature/eosm-magic-zoom-touch
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check out known-good EOS M photo-touch base
+        uses: actions/checkout@v4
+        with:
+          ref: feature/eosm-photo-touch-profiles
+
+      - name: Prepare known-good workflow and inject Magic Zoom API declarations
+        run: |
+          set -euo pipefail
+          git fetch origin feature/eosm-magic-zoom-touch
+          git fetch origin feature/eosm-auto-iso
+          python2 - <<'PY'
+          PY
+          ruby - <<'RUBY'
+          require 'yaml'
+
+          OLD_COMMIT = '6a101db2e484dfdb5491f3624396d91e184bf9de'
+          old_yaml = `git show #{OLD_COMMIT}:.github/workflows/build-eosm-magic-zoom-touch.yml`
+          abort 'Unable to load previous Magic Zoom touch workflow' if old_yaml.empty?
+
+          File.write('/tmp/magic_zoom_touch_workflow.yml', old_yaml)
+
+          gui = File.read('src/gui-common.c')
+          marker = '#include <module.h>\n'
+          declarations = marker + "\nextern int zoom_overlay_touch_is_enabled(void);\nextern void zoom_overlay_set_touch_position(int x, int y);\n"
+          unless gui.include?('zoom_overlay_touch_is_enabled(void)')
+              abort 'Unable to locate gui-common module include marker' unless gui.include?(marker)
+              gui = gui.sub(marker, declarations)
+              File.write('src/gui-common.c', gui)
+          end
+
+          # The EOS M slim build can disable zebra execution while Canon's GUI is
+          # suppressed. That used to make the Magic Zoom overlay return early.
+          # Keep the normal behavior for other cameras and only relax that gate
+          # for EOS M, where Global Draw remains the master overlay switch.
+          zebra = File.read('src/zebra.c')
+          old_block = "    if (!lv) return 0;\n    if (!zoom_overlay_enabled) return 0;\n    if (!zebra_should_run()) return 0;\n    if (EXT_MONITOR_RCA) return 0;\n"
+          new_block = "    if (!lv) return 0;\n    if (!zoom_overlay_enabled) return 0;\n#ifdef CONFIG_EOSM\n    if (!get_global_draw()) return 0;\n#else\n    if (!zebra_should_run()) return 0;\n#endif\n    if (EXT_MONITOR_RCA) return 0;\n"
+          unless zebra.include?(new_block)
+              abort 'Unable to locate Magic Zoom draw gate in zebra.c' unless zebra.include?(old_block)
+              zebra = zebra.sub(old_block, new_block)
+              File.write('src/zebra.c', zebra)
+          end
+          RUBY
+
+      - name: Install Python 2 + Python 3 Docutils
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python2 python3-docutils
+          sudo ln -sf /usr/bin/python2 /usr/local/bin/python
+
+      - name: Generate placeholder module info
+        run: |
+          for dir in modules/*/; do
+            if [ -f "${dir}Makefile" ]; then
+              printf '#define MODULE_STRINGS() \\\n    MODULE_STRINGS_START() \\\n    MODULE_STRINGS_END()\n' > "${dir}module_strings.h"
+            fi
+          done
+
+      - name: Execute known-good Magic Zoom touch patch workflow
+        run: |
+          set -euo pipefail
+          ruby - <<'RUBY'
+          require 'yaml'
+          yaml = File.read('/tmp/magic_zoom_touch_workflow.yml')
+          wf = YAML.load(yaml)
+          steps = wf.dig('jobs', 'build', 'steps') || []
+          abort 'Previous workflow steps were not found' if steps.empty?
+
+          skip = {
+            'Check out known-good EOS M photo-touch base' => true,
+            'Cache ARM toolchain' => true,
+            'Download ARM toolchain' => true,
+            'Add toolchain to PATH' => true,
+            'Check compiler' => true,
+            'Upload build artifacts' => true
+          }
+
+          steps.each do |step|
+            next unless step.is_a?(Hash) && step['run']
+            name = step['name'].to_s
+            next if skip[name]
+
+            # Before the actual build, tighten the touch takeover gate so it only
+            # consumes image taps when the Magic Zoom master switch is enabled,
+            # and only while the normal LV overlay path can display it.
+            if name == 'Route EOS M Live View image taps to Magic Zoom only when enabled'
+              z = File.read('src/zebra.c')
+              old = '    return lv && !RECORDING && zoom_overlay_enabled;\n'
+              new = '    return lv && !RECORDING && zoom_overlay_enabled && get_global_draw() && !gui_menu_shown() && lv_dispsize != 10;\n'
+              abort 'Magic Zoom touch enable gate not found' unless z.include?(old)
+              z = z.sub(old, new)
+              File.write('src/zebra.c', z)
+            end
+
+            puts "==> #{name}"
+            ok = system('bash', '-eo', 'pipefail', '-c', step['run'])
+            abort "Step failed: #{name}" unless ok
+          end
+          RUBY
+
+      - name: Download and expose ARM toolchain
+        run: |
+          set -euo pipefail
+          cd "$HOME"
+          if [ ! -x "$HOME/gcc-arm-none-eabi-5_4-2016q3/bin/arm-none-eabi-gcc" ]; then
+            wget -q https://launchpad.net/gcc-arm-embedded/5.0/5-2016-q3-update/+download/gcc-arm-none-eabi-5_4-2016q3-20160926-linux.tar.bz2
+            tar xjf gcc-arm-none-eabi-5_4-2016q3-20160926-linux.tar.bz2
+          fi
+          echo "$HOME/gcc-arm-none-eabi-5_4-2016q3/bin" >> "$GITHUB_PATH"
+
+      - name: Check compiler
+        run: arm-none-eabi-gcc --version
+
+      - name: Build EOS M platform + modules + package zip
+        run: make -C platform/EOSM.202 zip SHELL=/bin/bash
+
+      - name: Verify build outputs and Auto ISO exclusion
+        run: |
+          set -euo pipefail
+          test -f platform/EOSM.202/autoexec.bin
+          ls -la platform/EOSM.202/*.bin platform/EOSM.202/*.zip
+          if unzip -l platform/EOSM.202/*.zip | grep -q 'auto_iso.mo'; then
+            echo 'ERROR: Auto ISO module must remain disabled on this baseline'
+            exit 1
+          fi
+          echo 'Auto ISO module absent as expected'
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: eosm-magic-zoom-touch-build
+          path: |
+            platform/EOSM.202/autoexec.bin
+            platform/EOSM.202/*.zip
+            platform/EOSM.202/*.sym
+          if-no-files-found: error
