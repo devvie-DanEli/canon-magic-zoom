@@ -1,0 +1,1 @@
+Validation trigger for the corrected Magic Zoom touch workflow.
