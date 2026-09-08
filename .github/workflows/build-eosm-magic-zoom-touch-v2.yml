@@ -29,8 +29,8 @@ jobs:
           File.write('/tmp/magic_zoom_touch_workflow.yml', old_yaml)
 
           gui = File.read('src/gui-common.c')
-          marker = '#include <dryos.h>\n'
-          declarations = marker + "\nextern int zoom_overlay_touch_is_enabled(void);\nextern void zoom_overlay_set_touch_position(int x, int y);\n"
+          marker = '#include <dryos.h>'
+          declarations = marker + "\n\nextern int zoom_overlay_touch_is_enabled(void);\nextern void zoom_overlay_set_touch_position(int x, int y);\n"
           unless gui.include?('zoom_overlay_touch_is_enabled(void)')
               abort 'Unable to locate gui-common include marker' unless gui.include?(marker)
               gui = gui.sub(marker, declarations)
