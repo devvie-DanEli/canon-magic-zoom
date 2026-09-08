@@ -21,11 +21,7 @@ jobs:
           set -euo pipefail
           git fetch origin feature/eosm-magic-zoom-touch
           git fetch origin feature/eosm-auto-iso
-          python2 - <<'PY'
-          PY
           ruby - <<'RUBY'
-          require 'yaml'
-
           OLD_COMMIT = '6a101db2e484dfdb5491f3624396d91e184bf9de'
           old_yaml = `git show #{OLD_COMMIT}:.github/workflows/build-eosm-magic-zoom-touch.yml`
           abort 'Unable to load previous Magic Zoom touch workflow' if old_yaml.empty?
@@ -41,10 +37,6 @@ jobs:
               File.write('src/gui-common.c', gui)
           end
 
-          # The EOS M slim build can disable zebra execution while Canon's GUI is
-          # suppressed. That used to make the Magic Zoom overlay return early.
-          # Keep the normal behavior for other cameras and only relax that gate
-          # for EOS M, where Global Draw remains the master overlay switch.
           zebra = File.read('src/zebra.c')
           old_block = "    if (!lv) return 0;\n    if (!zoom_overlay_enabled) return 0;\n    if (!zebra_should_run()) return 0;\n    if (EXT_MONITOR_RCA) return 0;\n"
           new_block = "    if (!lv) return 0;\n    if (!zoom_overlay_enabled) return 0;\n#ifdef CONFIG_EOSM\n    if (!get_global_draw()) return 0;\n#else\n    if (!zebra_should_run()) return 0;\n#endif\n    if (EXT_MONITOR_RCA) return 0;\n"
@@ -85,6 +77,8 @@ jobs:
             'Download ARM toolchain' => true,
             'Add toolchain to PATH' => true,
             'Check compiler' => true,
+            'Build EOS M platform + modules + package zip' => true,
+            'Verify build outputs and Auto ISO exclusion' => true,
             'Upload build artifacts' => true
           }
 
@@ -93,9 +87,6 @@ jobs:
             name = step['name'].to_s
             next if skip[name]
 
-            # Before the actual build, tighten the touch takeover gate so it only
-            # consumes image taps when the Magic Zoom master switch is enabled,
-            # and only while the normal LV overlay path can display it.
             if name == 'Route EOS M Live View image taps to Magic Zoom only when enabled'
               z = File.read('src/zebra.c')
               old = '    return lv && !RECORDING && zoom_overlay_enabled;\n'
