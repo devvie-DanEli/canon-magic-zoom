@@ -78,15 +78,6 @@ jobs:
             name = step['name'].to_s
             next if skip[name]
 
-            if name == 'Route EOS M Live View image taps to Magic Zoom only when enabled'
-              z = File.read('src/zebra.c')
-              old = '    return lv && !RECORDING && zoom_overlay_enabled;\n'
-              new = '    return lv && !RECORDING && zoom_overlay_enabled && get_global_draw() && !gui_menu_shown() && lv_dispsize != 10;\n'
-              abort 'Magic Zoom touch enable gate not found' unless z.include?(old)
-              z = z.sub(old, new)
-              File.write('src/zebra.c', z)
-            end
-
             puts "==> #{name}"
             ok = system('bash', '-eo', 'pipefail', '-c', step['run'])
             abort "Step failed: #{name}" unless ok
