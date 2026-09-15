@@ -103,7 +103,7 @@ jobs:
           text = text.sub(needle, replacement)
           File.write(path, text)
           RUBY
-          grep -q $'\tmodule-list-slim.o \\' src/Makefile.src
+          grep -qF 'module-list-slim.o' src/Makefile.src
 
       - name: Download and expose ARM toolchain
         run: |
