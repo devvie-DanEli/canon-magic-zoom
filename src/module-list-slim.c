@@ -308,9 +308,22 @@ static struct menu_entry slim_module_menu[] =
     SLIM_MODULE_ENTRY(63)
 };
 
+static struct menu_entry slim_module_list_launcher[] =
+{
+    {
+        .name = "Module List",
+        .select = menu_open_submenu,
+        .submenu_width = 710,
+        .submenu_height = 420,
+        .icon_type = IT_SUBMENU,
+        .children = slim_module_menu,
+        .help = "Enable or disable optional modules for the next boot.",
+    },
+};
+
 static void slim_module_menu_init(void)
 {
-    menu_add("Settings", slim_module_menu, COUNT(slim_module_menu));
+    menu_add("Settings", slim_module_list_launcher, COUNT(slim_module_list_launcher));
 }
 
 INIT_FUNC(__FILE__, slim_module_menu_init);
