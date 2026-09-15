@@ -84,6 +84,13 @@ jobs:
           end
           RUBY
 
+      - name: Inject Slim UI module list source
+        run: |
+          set -euo pipefail
+          git show origin/feature/eosm-magic-zoom-touch:src/module-list-slim.c > src/module-list-slim.c
+          test -s src/module-list-slim.c
+          grep -q 'Slim UI module manager' src/module-list-slim.c
+
       - name: Download and expose ARM toolchain
         run: |
           set -euo pipefail
@@ -98,7 +105,7 @@ jobs:
         run: arm-none-eabi-gcc --version
 
       - name: Build EOS M platform + modules + package zip
-        run: make -C platform/EOSM.202 zip SHELL=/bin/bash
+        run: make -C platform/EOSM.202 zip SHELL=/bin/bash ML_SRC_EXTRA_OBJS=module-list-slim.o
 
       - name: Verify build outputs and Auto ISO exclusion
         run: |
