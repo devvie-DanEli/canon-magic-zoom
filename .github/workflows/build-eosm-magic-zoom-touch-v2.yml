@@ -89,7 +89,21 @@ jobs:
           set -euo pipefail
           git show origin/feature/eosm-magic-zoom-touch:src/module-list-slim.c > src/module-list-slim.c
           test -s src/module-list-slim.c
-          grep -q 'Slim UI module manager' src/module-list-slim.c
+          grep -q 'Module List' src/module-list-slim.c
+
+      - name: Add Slim UI module list to generic core object list
+        run: |
+          set -euo pipefail
+          ruby - <<'RUBY'
+          path = 'src/Makefile.src'
+          text = File.read(path)
+          needle = "\tmenu-grid.o \\\n"
+          abort 'Unable to locate menu-grid.o in generic source list' unless text.include?(needle)
+          replacement = needle + "\tmodule-list-slim.o \\\n"
+          text = text.sub(needle, replacement)
+          File.write(path, text)
+          RUBY
+          grep -q $'\tmodule-list-slim.o \\' src/Makefile.src
 
       - name: Download and expose ARM toolchain
         run: |
@@ -105,7 +119,7 @@ jobs:
         run: arm-none-eabi-gcc --version
 
       - name: Build EOS M platform + modules + package zip
-        run: make -C platform/EOSM.202 zip SHELL=/bin/bash ML_SRC_EXTRA_OBJS=module-list-slim.o
+        run: make -C platform/EOSM.202 zip SHELL=/bin/bash
 
       - name: Verify build outputs and Auto ISO exclusion
         run: |
