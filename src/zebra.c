@@ -297,17 +297,9 @@ static int zoom_overlay_triggered_by_focus_ring_countdown = 0;
 static void zoom_overlay_touch_select(void *priv, int delta)
 {
     menu_numeric_toggle((int *)priv, delta, 0, 1);
-    if (zoom_overlay_touch)
-    {
-        /* Touch mode owns the MZ trigger path. Do not leave a previous
-         * zoom-button/focus-ring trigger latched underneath it. */
-        zoom_overlay_triggered_by_zoom_btn = 0;
-        zoom_overlay_triggered_by_focus_ring_countdown = 0;
-    }
-    else
-    {
-        zoom_overlay_touch_active = 0;
-    }
+    zoom_overlay_triggered_by_zoom_btn = 0;
+    zoom_overlay_triggered_by_focus_ring_countdown = 0;
+    zoom_overlay_touch_active = 0;
 }
 #endif
 static int is_zoom_overlay_triggered_by_zoom_btn() 
@@ -400,14 +392,11 @@ int zoom_overlay_touch_is_enabled(void)
 
 int zoom_overlay_touch_is_in_display(int x, int y)
 {
-    int bx, by, bw, bh;
-    if (!lv)
-        return 0;
-    if (zoom_overlay_size == 3)
-        return 1;
-    if (!zoom_overlay_touch_get_display_rect(&bx, &by, &bw, &bh))
-        return 0;
-    return x >= bx && x < bx + bw && y >= by && y < by + bh;
+    /* No permanent dead zone. The current MZ window can be touched again
+     * to choose a new source point, including the initial top-left area. */
+    (void)x;
+    (void)y;
+    return 0;
 }
 
 void zoom_overlay_touch_set_position(int x, int y)
@@ -445,11 +434,9 @@ int should_draw_zoom_overlay()
 #ifdef CONFIG_EOSM
     if (zoom_overlay_touch && zoom_overlay_size != 3)
     {
-        /* Touch to Zoom owns Magic Zoom activation except for Always On.
-         * Touch is therefore independent of HalfShutter / Focus / ZoomIn. */
-        if (zoom_overlay_touch_active) return true;
-        if (zoom_overlay_trigger_mode == MZ_ALWAYS_ON) return true;
-        return false;
+        /* Touch to Zoom is explicitly HalfShutter-latched. It overrides
+         * the normal Trigger mode while enabled. */
+        return zoom_overlay_touch_active;
     }
 #endif
     
@@ -4105,12 +4092,25 @@ int handle_zoom_overlay(struct event * event)
     if (gui_menu_shown()) return 1;
     if (!lv) return 1;
     if (!get_global_draw()) return 1;
+
 #ifdef CONFIG_EOSM
-    if (zoom_overlay_touch && zoom_overlay_enabled)
+    if (zoom_overlay_touch && zoom_overlay_enabled &&
+        event->param == BGMT_PRESS_HALFSHUTTER)
     {
-        /* Touch to Zoom owns MZ triggering while enabled. */
+        /* Touch to Zoom uses HalfShutter as a simple ON/OFF latch.
+         * Keep the Canon event flowing so normal AF/exposure behavior survives. */
+        zoom_overlay_touch_active = !zoom_overlay_touch_active;
         zoom_overlay_triggered_by_zoom_btn = 0;
         zoom_overlay_triggered_by_focus_ring_countdown = 0;
+        zoom_overlay_dirty = 1;
+        redraw();
+        return 1;
+    }
+
+    if (zoom_overlay_touch && zoom_overlay_enabled)
+    {
+        /* While Touch to Zoom is configured, its half-shutter latch is the
+         * sole Magic Zoom trigger. */
         return 1;
     }
 #endif
@@ -4388,7 +4388,11 @@ static void draw_zoom_overlay(int dirty)
     }
     //~ bmp_printf(FONT_LARGE, 50, 50, "%d,%d %d,%d", W, H, aff_x0_lv);
 
+#ifdef CONFIG_EOSM
+    if (zoom_overlay_pos && !zoom_overlay_touch_active)
+#else
     if (zoom_overlay_pos)
+#endif
     {
         int w = W * lv->width / hd->width;
         int h = H * lv->width / hd->width;
@@ -4412,7 +4416,37 @@ static void draw_zoom_overlay(int dirty)
 
     //~ draw_circle(x0,y0,45,COLOR_WHITE);
     int y;
-    int x0c = COERCE(zb_x0_lv - (W>>1), 0, lv->width-W) & ~1;   /* should be 32-bit (2px) aligned for memset64 */
+
+#ifdef CONFIG_EOSM
+    if (zoom_overlay_touch_active)
+    {
+        /* Keep the source at the exact touch point, but keep the visible MZ
+         * window out of the Slim status bars. This avoids the YUV/bitmap
+         * redraw fight that appears when the box overlaps the bottom bar. */
+        int touch_w = MAX(1, W * 720 / MAX(1, lv->width));
+        int touch_h = MAX(1, H * 480 / MAX(1, lv->height));
+        int safe_x_min = touch_w / 2 + 2;
+        int safe_x_max = 719 - (touch_w - touch_w / 2) - 2;
+        int safe_y_min = touch_h / 2 + 2;
+        int safe_y_max = 479 - (touch_h - touch_h / 2) - 2;
+        int top_bar = get_ml_topbar_pos();
+        int bottom_bar = get_ml_bottombar_pos();
+
+        if (top_bar > 0)
+            safe_y_min = MAX(safe_y_min, top_bar + 52 + touch_h / 2);
+        if (bottom_bar > 0)
+            safe_y_max = MIN(safe_y_max, bottom_bar - 20 - touch_h / 2);
+
+        int display_x = COERCE(zoom_overlay_touch_x, safe_x_min,
+                               MAX(safe_x_min, safe_x_max));
+        int display_y = COERCE(zoom_overlay_touch_y, safe_y_min,
+                               MAX(safe_y_min, safe_y_max));
+
+        zb_x0_lv = display_x * lv->width / 720;
+        zb_y0_lv = display_y * lv->height / 480;
+    }
+
+    int x0c = COERCE(zb_x0_lv - (W>>1), 0, lv->width-W) & ~1;
     int y0c = COERCE(zb_y0_lv - (H>>1), 0, lv->height-H);
 
     extern int focus_value;
