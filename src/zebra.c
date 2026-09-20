@@ -251,24 +251,6 @@ static void zoom_overlay_select(void *priv, int delta)
 #endif
 }
 
-#ifdef CONFIG_EOSM
-static void zoom_overlay_touch_select(void *priv, int delta)
-{
-    menu_numeric_toggle((int *)priv, delta, 0, 1);
-    if (zoom_overlay_touch)
-    {
-        /* Touch mode owns the trigger path. Do not leave a previous
-         * zoom-button/focus-ring trigger latched underneath it. */
-        zoom_overlay_triggered_by_zoom_btn = 0;
-        zoom_overlay_triggered_by_focus_ring_countdown = 0;
-    }
-    else
-    {
-        zoom_overlay_touch_active = 0;
-    }
-}
-#endif
-
 int get_zoom_overlay_trigger_mode() 
 { 
 #ifdef FEATURE_MAGIC_ZOOM
@@ -310,6 +292,24 @@ static int get_zoom_overlay_trigger_by_halfshutter()
 
 static int zoom_overlay_triggered_by_zoom_btn = 0;
 static int zoom_overlay_triggered_by_focus_ring_countdown = 0;
+
+#ifdef CONFIG_EOSM
+static void zoom_overlay_touch_select(void *priv, int delta)
+{
+    menu_numeric_toggle((int *)priv, delta, 0, 1);
+    if (zoom_overlay_touch)
+    {
+        /* Touch mode owns the MZ trigger path. Do not leave a previous
+         * zoom-button/focus-ring trigger latched underneath it. */
+        zoom_overlay_triggered_by_zoom_btn = 0;
+        zoom_overlay_triggered_by_focus_ring_countdown = 0;
+    }
+    else
+    {
+        zoom_overlay_touch_active = 0;
+    }
+}
+#endif
 static int is_zoom_overlay_triggered_by_zoom_btn() 
 { 
     if (!get_global_draw()) return 0;
@@ -4429,7 +4429,31 @@ static void draw_zoom_overlay(int dirty)
     if (zoom_overlay_split == 1 /* non zerocross */) rev = 0;
 
     uint16_t* d = lvr + x0c + (y0c + 2) * lv->width;
-    uint16_t* s = hdr + (aff_y0_hd - (H/2/X)) * hd->width + (aff_x0_hd - (W/2/X));
+
+    int source_x_hd = aff_x0_hd;
+    int source_y_hd = aff_y0_hd;
+#ifdef CONFIG_EOSM
+    if (zoom_overlay_touch_active)
+    {
+        /* The touch coordinate chooses the SOURCE of the magnified image.
+         * Keep the Magic Zoom window itself at its configured position. */
+        int touch_x_lv = zoom_overlay_touch_x * lv->width / 720;
+        int touch_y_lv = zoom_overlay_touch_y * lv->height / 480;
+        source_x_hd = LV2HD_X(touch_x_lv);
+        source_y_hd = LV2HD_Y(touch_y_lv);
+    }
+#endif
+
+    /* yuvcpy_main samples a smaller HD source region when X > 1. Clamp the
+     * source origin so a touch near an edge cannot read outside the HD buffer. */
+    int source_w = MAX(1, W / X);
+    int source_h = MAX(1, H / X);
+    int source_x0 = COERCE(
+        source_x_hd - source_w / 2, 0, MAX(0, hd->width - source_w));
+    int source_y0 = COERCE(
+        source_y_hd - source_h / 2, 0, MAX(0, hd->height - source_h));
+
+    uint16_t* s = hdr + source_y0 * hd->width + source_x0;
     for (y = 2; y < H-2; y++)
     {
         int off = zoom_overlay_split ? (y < H/2 ? rawoff : -rawoff) : 0;
