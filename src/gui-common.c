@@ -519,8 +519,7 @@ static int handle_slim_rec_touch_block(struct event * event)
         {
             int x, y;
             if (eosm_touch_get_xy(event, &x, &y) &&
-                !lvinfo_touch_is_bar_area(y) &&
-                !zoom_overlay_touch_is_in_display(x, y))
+                !lvinfo_touch_is_bar_area(y))
             {
                 zoom_overlay_touch_set_position(x, y);
             }
