@@ -4445,6 +4445,7 @@ static void draw_zoom_overlay(int dirty)
         zb_x0_lv = display_x * lv->width / 720;
         zb_y0_lv = display_y * lv->height / 480;
     }
+#endif
 
     int x0c = COERCE(zb_x0_lv - (W>>1), 0, lv->width-W) & ~1;
     int y0c = COERCE(zb_y0_lv - (H>>1), 0, lv->height-H);
