@@ -231,12 +231,43 @@ static CONFIG_INT( "zoom.overlay.pos", zoom_overlay_pos, 1);
 #endif
 static CONFIG_INT( "zoom.overlay.split", zoom_overlay_split, 0);
 
+#ifdef CONFIG_EOSM
+/* EOS M: optional touchscreen-driven Magic Zoom origin. Disabled by default
+ * so the baseline trigger behavior is unchanged unless explicitly enabled. */
+static CONFIG_INT( "zoom.overlay.touch", zoom_overlay_touch, 0);
+static int zoom_overlay_touch_x = 360;
+static int zoom_overlay_touch_y = 240;
+static int zoom_overlay_touch_active = 0;
+#endif
+
 /* Slim: dial calls .select when present — must toggle ON/OFF, not open submenu.
  * SET opens the submenu via EM_INLINE_ADJUST + children (menu_entry_select mode 3). */
 static void zoom_overlay_select(void *priv, int delta)
 {
     menu_numeric_toggle((int *)priv, delta, 0, 1);
+#ifdef CONFIG_EOSM
+    if (!zoom_overlay_enabled)
+        zoom_overlay_touch_active = 0;
+#endif
 }
+
+#ifdef CONFIG_EOSM
+static void zoom_overlay_touch_select(void *priv, int delta)
+{
+    menu_numeric_toggle((int *)priv, delta, 0, 1);
+    if (zoom_overlay_touch)
+    {
+        /* Touch mode owns the trigger path. Do not leave a previous
+         * zoom-button/focus-ring trigger latched underneath it. */
+        zoom_overlay_triggered_by_zoom_btn = 0;
+        zoom_overlay_triggered_by_focus_ring_countdown = 0;
+    }
+    else
+    {
+        zoom_overlay_touch_active = 0;
+    }
+}
+#endif
 
 int get_zoom_overlay_trigger_mode() 
 { 
@@ -287,6 +318,110 @@ static int is_zoom_overlay_triggered_by_zoom_btn()
 
 static int zoom_overlay_dirty = 0;
 
+#ifdef CONFIG_EOSM
+static int zoom_overlay_touch_get_display_rect(int *x, int *y, int *w, int *h)
+{
+    struct vram_info *v = get_yuv422_vram();
+    int W = 0, H = 0;
+    int cx, cy;
+    int aff_x0_lv, aff_y0_lv;
+
+    if (!v || !v->vram || v->width <= 0 || v->height <= 0)
+        return 0;
+
+    switch (zoom_overlay_size)
+    {
+        case 0:
+            W = os.x_ex / 5;
+            H = os.y_ex / 4;
+            break;
+        case 1:
+            W = os.x_ex / 3;
+            H = os.y_ex * 2/5;
+            break;
+        case 2:
+            W = os.x_ex / 2;
+            H = os.y_ex / 2;
+            break;
+        default:
+            return 0;
+    }
+
+    W &= ~3;
+    if (W <= 0 || H <= 0 || W > v->width || H > v->height)
+        return 0;
+
+    get_afframe_pos(720, 480, &aff_x0_lv, &aff_y0_lv);
+    aff_x0_lv = N2LV_X(aff_x0_lv);
+    aff_y0_lv = N2LV_Y(aff_y0_lv);
+
+    switch (zoom_overlay_pos)
+    {
+        case 0:
+            cx = aff_x0_lv;
+            cy = aff_y0_lv;
+            break;
+        case 1:
+            cx = W/2 + 50;
+            cy = H/2 + 50;
+            break;
+        case 2:
+            cx = BM2LV_X(os.x_max) - W/2 - 50;
+            cy = H/2 + 50;
+            break;
+        case 3:
+            cx = BM2LV_X(os.x_max) - W/2 - 50;
+            cy = BM2LV_Y(os.y_max) - H/2 - 50;
+            break;
+        case 4:
+            cx = W/2 + 50;
+            cy = BM2LV_Y(os.y_max) - H/2 - 50;
+            break;
+        default:
+            return 0;
+    }
+
+    int x0 = COERCE(cx - (W>>1), 0, v->width - W) & ~1;
+    int y0 = COERCE(cy - (H>>1), 0, v->height - H);
+
+    *x = COERCE(x0 * 720 / v->width, 0, 719);
+    *y = COERCE(y0 * 480 / v->height, 0, 479);
+    *w = MAX(1, W * 720 / v->width);
+    *h = MAX(1, H * 480 / v->height);
+    return 1;
+}
+
+int zoom_overlay_touch_is_enabled(void)
+{
+    return lv && zoom_overlay_enabled && zoom_overlay_touch &&
+           !gui_menu_shown() && get_global_draw() &&
+           zoom_overlay_size != 3;
+}
+
+int zoom_overlay_touch_is_in_display(int x, int y)
+{
+    int bx, by, bw, bh;
+    if (!lv)
+        return 0;
+    if (zoom_overlay_size == 3)
+        return 1;
+    if (!zoom_overlay_touch_get_display_rect(&bx, &by, &bw, &bh))
+        return 0;
+    return x >= bx && x < bx + bw && y >= by && y < by + bh;
+}
+
+void zoom_overlay_touch_set_position(int x, int y)
+{
+    if (!zoom_overlay_touch_is_enabled())
+        return;
+    zoom_overlay_touch_x = COERCE(x, 0, 719);
+    zoom_overlay_touch_y = COERCE(y, 0, 479);
+    zoom_overlay_touch_active = 1;
+    redraw();
+}
+#endif
+
+
 int should_draw_zoom_overlay()
 {
 #ifdef FEATURE_MAGIC_ZOOM
@@ -306,6 +441,17 @@ int should_draw_zoom_overlay()
     #endif
     
     if (zoom_overlay_size == 3 && video_mode_crop && is_movie_mode()) return 0;
+
+#ifdef CONFIG_EOSM
+    if (zoom_overlay_touch && zoom_overlay_size != 3)
+    {
+        /* Touch to Zoom owns Magic Zoom activation except for Always On.
+         * Touch is therefore independent of HalfShutter / Focus / ZoomIn. */
+        if (zoom_overlay_touch_active) return true;
+        if (zoom_overlay_trigger_mode == MZ_ALWAYS_ON) return true;
+        return false;
+    }
+#endif
     
     if (zoom_overlay_trigger_mode == 4) return true;
 
@@ -3570,6 +3716,19 @@ struct menu_entry zebra_menus[] = {
                 .help = "1:1 displays recorded pixels, 2:1 displays them doubled.",
                 .edit_mode = EM_INLINE_ADJUST,
             },
+#ifdef CONFIG_EOSM
+            {
+                .name = "Touch to Zoom",
+                .priv = &zoom_overlay_touch,
+                .select = zoom_overlay_touch_select,
+                .max = 1,
+                .choices = CHOICES("OFF", "ON"),
+                .icon_type = IT_BOOL,
+                .edit_mode = EM_INLINE_ADJUST,
+                .help = "Tap Live View outside the Magic Zoom box to magnify that area.",
+                .help2 = "While ON, Live View touch controls and tap gestures are disabled.",
+            },
+#endif
 #ifdef CONFIG_LV_FOCUS_INFO
             {
                 .name = "Focus confirm", 
@@ -3946,6 +4105,15 @@ int handle_zoom_overlay(struct event * event)
     if (gui_menu_shown()) return 1;
     if (!lv) return 1;
     if (!get_global_draw()) return 1;
+#ifdef CONFIG_EOSM
+    if (zoom_overlay_touch && zoom_overlay_enabled)
+    {
+        /* Touch to Zoom owns MZ triggering while enabled. */
+        zoom_overlay_triggered_by_zoom_btn = 0;
+        zoom_overlay_triggered_by_focus_ring_countdown = 0;
+        return 1;
+    }
+#endif
     #ifdef CONFIG_600D
     if (get_disp_pressed()) return 1;
     #endif
@@ -4006,6 +4174,9 @@ void zoom_overlay_disable()
 {
     zoom_overlay_triggered_by_zoom_btn = 0;
     zoom_overlay_triggered_by_focus_ring_countdown = 0;
+#ifdef CONFIG_EOSM
+    zoom_overlay_touch_active = 0;
+#endif
 }
 
 void zoom_overlay_set_countdown(int x)
@@ -4181,30 +4352,39 @@ static void draw_zoom_overlay(int dirty)
     // Center of Magic Zoom box in the LV coordinate space
     int zb_x0_lv, zb_y0_lv; 
 
-    switch(zoom_overlay_pos)
+    if (zoom_overlay_touch_active)
     {
-        case 0: // AFF
-            zb_x0_lv = aff_x0_lv;
-            zb_y0_lv = aff_y0_lv;
-            break;
-        case 1: // NW
-            zb_x0_lv = W/2 + 50;
-            zb_y0_lv = H/2 + 50;
-            break;
-        case 2: // NE
-            zb_x0_lv = BM2LV_X(os.x_max) - W/2 - 50;
-            zb_y0_lv = H/2 + 50;
-            break;
-        case 3: // SE
-            zb_x0_lv = BM2LV_X(os.x_max) - W/2 - 50;
-            zb_y0_lv = BM2LV_Y(os.y_max) - H/2 - 50;
-            break;
-        case 4: // SV
-            zb_x0_lv = W/2 + 50;
-            zb_y0_lv = BM2LV_Y(os.y_max) - H/2 - 50;
-            break;
-        default:
-            return;
+        /* EOS M touch coordinates are 720x480 BMP space. */
+        zb_x0_lv = zoom_overlay_touch_x * lv->width / 720;
+        zb_y0_lv = zoom_overlay_touch_y * lv->height / 480;
+    }
+    else
+    {
+        switch(zoom_overlay_pos)
+        {
+            case 0: // AFF
+                zb_x0_lv = aff_x0_lv;
+                zb_y0_lv = aff_y0_lv;
+                break;
+            case 1: // NW
+                zb_x0_lv = W/2 + 50;
+                zb_y0_lv = H/2 + 50;
+                break;
+            case 2: // NE
+                zb_x0_lv = BM2LV_X(os.x_max) - W/2 - 50;
+                zb_y0_lv = H/2 + 50;
+                break;
+            case 3: // SE
+                zb_x0_lv = BM2LV_X(os.x_max) - W/2 - 50;
+                zb_y0_lv = BM2LV_Y(os.y_max) - H/2 - 50;
+                break;
+            case 4: // SV
+                zb_x0_lv = W/2 + 50;
+                zb_y0_lv = BM2LV_Y(os.y_max) - H/2 - 50;
+                break;
+            default:
+                return;
+        }
     }
     //~ bmp_printf(FONT_LARGE, 50, 50, "%d,%d %d,%d", W, H, aff_x0_lv);
 
