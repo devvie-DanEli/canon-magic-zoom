@@ -509,6 +509,56 @@ static int handle_slim_rec_touch_block(struct event * event)
         return 0;
     }
 
+#ifdef CONFIG_EOSM
+#ifdef FEATURE_MAGIC_ZOOM
+    if (zoom_overlay_touch_is_enabled())
+    {
+        switch (event->param)
+        {
+        case BGMT_TOUCH_1_FINGER:
+        {
+            int x, y;
+            if (eosm_touch_get_xy(event, &x, &y) &&
+                !lvinfo_touch_is_bar_area(y) &&
+                !zoom_overlay_touch_is_in_display(x, y))
+            {
+                zoom_overlay_touch_set_position(x, y);
+            }
+
+            /* Touch to Zoom deliberately takes ownership of the entire
+             * touchscreen while active, so Quick Screen, field editors,
+             * memory controls, Canon touch focus and tap gestures cannot
+             * compete with it. */
+            if (lvinfo_touch_editor_is_open())
+                lvinfo_touch_editor_close();
+            slim_touch_tap_count = 0;
+            slim_touch_tap_deadline = 0;
+            slim_touch_lv_pressed = 0;
+            slim_touch_lv_control_consumed = 0;
+            return 0;
+        }
+        case BGMT_TOUCH_2_FINGER:
+        case BGMT_UNTOUCH_1_FINGER:
+        case BGMT_UNTOUCH_2_FINGER:
+#ifdef BGMT_TOUCH_MOVE
+        case BGMT_TOUCH_MOVE:
+#endif
+#ifdef BGMT_TOUCH_PINCH_START
+        case BGMT_TOUCH_PINCH_START:
+#endif
+#ifdef BGMT_TOUCH_PINCH_STOP
+        case BGMT_TOUCH_PINCH_STOP:
+#endif
+            slim_touch_lv_pressed = 0;
+            slim_touch_lv_control_consumed = 0;
+            return 0;
+        default:
+            break;
+        }
+    }
+#endif
+#endif
+
     if (RECORDING)
     {
         /* Recording owns the entire touchscreen, independent of Global Draw.
