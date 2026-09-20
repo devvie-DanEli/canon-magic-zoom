@@ -75,6 +75,13 @@ void monitoring_graph_clear_region(int x, int y, int w, int h);
 /* true if should draw Magic Zoom (setting + preconditions) */
 int should_draw_zoom_overlay();
 
+#ifdef CONFIG_EOSM
+/* EOS M Touch to Zoom: touch takeover for Magic Zoom while enabled. */
+int zoom_overlay_touch_is_enabled(void);
+int zoom_overlay_touch_is_in_display(int x, int y);
+void zoom_overlay_touch_set_position(int x, int y);
+#endif
+
 /* get MZ setting for trigger mode */
 int get_zoom_overlay_trigger_mode();
 
