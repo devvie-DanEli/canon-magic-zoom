@@ -5307,6 +5307,12 @@ static MENU_UPDATE_FUNC(crop_preset_1x1_res_update)
 
 static MENU_UPDATE_FUNC(crop_preset_1x3_res_update)
 {
+    if (!is_EOSM && crop_preset_1x3_res_menu == 4)
+    {
+        crop_preset_1x3_res_menu = 3; /* Open Gate is EOS M-only. */
+        return;
+    }
+
     if (is_EOSM && crop_preset_1x3_res_menu == 4)
     {
         MENU_SET_VALUE("Open Gate");
@@ -5569,7 +5575,7 @@ static MENU_UPDATE_FUNC(crop_preset_fps_update)
             }
         }
                     
-        if (crop_preset_1x3_res_menu == 3) // High FPS
+        if (crop_preset_1x3_res_menu == 3) // Full-Res LV
         {
             int current_fps = fps_get_current_x1000();
 
@@ -5577,6 +5583,12 @@ static MENU_UPDATE_FUNC(crop_preset_fps_update)
             {
                 MENU_SET_VALUE("%d.%03d",current_fps/1000, current_fps%1000);
             }
+        }
+
+        if (is_EOSM && crop_preset_1x3_res_menu == 4) // Open Gate
+        {
+            MENU_SET_VALUE("23.976 FPS");
+            MENU_SET_ENABLED(0);
         }
     }
 
