@@ -1535,8 +1535,8 @@ static void FAST cmos_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
                  */
                 if (Anam_OpenGate)
                 {
-                    cmos_new[5] = 0xA0 + CMOS_5_Debug;
-                    cmos_new[7] = 0xB44 + CMOS_7_Debug;
+                    cmos_new[5] = 0x60 + CMOS_5_Debug;
+                    cmos_new[7] = 0xB25 + CMOS_7_Debug;
                 }
             break;
 
@@ -3035,24 +3035,25 @@ static inline uint32_t reg_override_1X3(uint32_t reg, uint32_t old_val)
     if (Anam_OpenGate)
     {
         /*
-         * Near-borderless Open Gate experiment: keep the proven 1664-wide 1x3
-         * horizontal readout, but extend the vertical window toward 2400 lines.
-         * This targets a much taller frame while preserving the 23.976 timing
-         * target. The 2400-line combination is experimental on EOS M.
+         * Safe Open Gate: use the EOS M's existing tested 1x3 2.20:1
+         * Highest profile rather than forcing the experimental 3478-line
+         * full-height readout. This keeps the useful 1x3 anti-aliasing/
+         * moire reduction while retaining the proven 23.976 FPS timing
+         * and continuous-recording path.
          *
-         * Test profile:
-         *   1664x2400, TimerA 0x1FF, TimerB 0xA2D @ ~23.98 FPS.
+         * Existing known-good profile:
+         *   1664x2268, TimerA 0x1FF, TimerB 0xA2D @ 23.976 FPS.
          */
         RAW_H         = 0x1C2 + reg_width;
-        RAW_V         = 0x97D + reg_height;
+        RAW_V         = 0x8F9 + reg_height;
         TimerB        = 0xA2D - fps_over;
         TimerA        = 0x1FF + TimerA_Debug;
 
         Preview_H     = 1660;
-        Preview_V     = 2400;
+        Preview_V     = 2268;
         Preview_R     = 0x1D000D;
-        YUV_HD_S_H    = 0x1050193 + YUV_HD_S_H_width + (YUV_HD_S_H_height << 16);
-        YUV_HD_S_V    = 0x1050389 + YUV_HD_S_V_width + (YUV_HD_S_V_height << 16);
+        YUV_HD_S_H    = 0x10501A3 + YUV_HD_S_H_width + (YUV_HD_S_H_height << 16);
+        YUV_HD_S_V    = 0x1050359 + YUV_HD_S_V_width + (YUV_HD_S_V_height << 16);
     }
     else if (Anam_FLV)
     {
@@ -4886,7 +4887,7 @@ static void FAST PATH_SelectPathDriveMode_hook(uint32_t* regs, uint32_t* stack, 
 
     if (CROP_PRESET_MENU == CROP_PRESET_1X3)
     {
-		if (Anam_FLV) // full-height 1x3
+		if (Anam_FLV || Anam_OpenGate) // full-height 1x3
 		{
 			Shift_Preview = 0;
 			Clear_Artifacts = 0;
@@ -5331,7 +5332,7 @@ static MENU_UPDATE_FUNC(crop_preset_1x3_res_update)
     if (is_EOSM && crop_preset_1x3_res_menu == 4)
     {
         MENU_SET_VALUE("Open Gate");
-        MENU_SET_HELP("1664x2400 @ 23.976 FPS (near-borderless 1x3 experiment).");
+        MENU_SET_HELP("1080x3478 @ 23.976 FPS (experimental full-height 1x3).");
         return;
     }
 
@@ -6018,8 +6019,8 @@ static void slim_crop_expected_res(int *w, int *h)
         int ar = crop_preset_ar_menu;
         if (is_EOSM && p == 4)
         {
-            *w = 1664;
-            *h = 2400;
+            *w = 1080;
+            *h = 3478;
             return;
         }
         if (p == 3)
