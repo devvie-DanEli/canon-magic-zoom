@@ -71,11 +71,12 @@ CONFIG_INT("crop.bit_depth", bit_depth_analog, 1);
 #define OUTPUT_10BIT (bit_depth_analog == 3)
 
 /* EOS M Sampling Lab: runtime-only test selection, never saved to ML config.
- * 0 = known-good 3x3 baseline (ADTG 0x800C = 2)
- * 1 = Test A (ADTG 0x800C = 0)
- * 2 = Test B (ADTG 0x800C = 1)
+ * 0 = known-good 3x3 baseline (ADTG 0x800C = 2, 0x8000 = 6)
+ * 1 = No Vertical Skip (ADTG 0x800C = 0)
+ * 2 = 2-Line Vertical Skip (ADTG 0x800C = 1)
+ * 3 = Test C (ADTG 0x800C = 2, 0x8000 = 5)
  */
-static int sampling_lab_vertical_mode = 0;
+static int sampling_lab_mode = 0;
 
 // check raw.c
 extern int BitDepth_Analog;
@@ -1917,15 +1918,16 @@ static void FAST adtg_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
             }
         }
 
-        /* EOS M Sampling Lab: override only the vertical sampling selector.
-         * Keep RAW dimensions, timing, CMOS window and preview geometry untouched.
-         * The known EOS M 3x3 baseline is 0x800C = 2. */
+        /* EOS M Sampling Lab: keep the known-good 3x3 sensor geometry and
+         * alter only the specific sampling register under test. */
         if (is_EOSM && crop_preset == CROP_PRESET_3X3 && mv1080_3_2)
         {
-            if (sampling_lab_vertical_mode == 1)
+            if (sampling_lab_mode == 1)
                 adtg_new[24] = (struct adtg_new) {2, 0x800C, 0};
-            else if (sampling_lab_vertical_mode == 2)
+            else if (sampling_lab_mode == 2)
                 adtg_new[24] = (struct adtg_new) {2, 0x800C, 1};
+            else if (sampling_lab_mode == 3)
+                adtg_new[24] = (struct adtg_new) {2, 0x8000, 5};
         }
 
         /* PowerSaveTiming & ReadOutTiming registers */
@@ -5715,11 +5717,11 @@ static struct menu_entry slim_more_hacks_menu[] = {
     },
 };
 
-/* EOS M Sampling Lab. This deliberately exposes only one sensor control first,
- * so every experiment changes one thing from the known-good 3x3 baseline. */
-static MENU_UPDATE_FUNC(sampling_lab_vertical_update)
+/* EOS M Sampling Lab. Each test changes one sensor-control value
+ * from the known-good 3x3 baseline. */
+static MENU_UPDATE_FUNC(sampling_lab_update)
 {
-    if (sampling_lab_vertical_mode != 0 &&
+    if (sampling_lab_mode != 0 &&
         !(crop_preset == CROP_PRESET_3X3 && mv1080_3_2))
     {
         MENU_SET_WARNING(MENU_WARN_ADVICE,
@@ -5727,23 +5729,23 @@ static MENU_UPDATE_FUNC(sampling_lab_vertical_update)
     }
 }
 
-static MENU_SELECT_FUNC(sampling_lab_vertical_select)
+static MENU_SELECT_FUNC(sampling_lab_select)
 {
-    sampling_lab_vertical_mode = MOD(COERCE(sampling_lab_vertical_mode, 0, 2) + delta, 3);
+    sampling_lab_mode = MOD(COERCE(sampling_lab_mode, 0, 3) + delta, 4);
 }
 
 static struct menu_entry sampling_lab_menu[] = {
     {
-        .name      = "Vertical Sampling",
-        .priv      = &sampling_lab_vertical_mode,
-        .max       = 2,
-        .choices   = CHOICES("Normal 3x3", "Test A", "Test B"),
+        .name      = "Sampling Lab",
+        .priv      = &sampling_lab_mode,
+        .max       = 3,
+        .choices   = CHOICES("Normal 3x3", "No Vertical Skip", "2-Line Vertical Skip", "Test C: 8000=5"),
         .edit_mode = EM_INLINE_ADJUST,
-        .select    = sampling_lab_vertical_select,
-        .update    = sampling_lab_vertical_update,
+        .select    = sampling_lab_select,
+        .update    = sampling_lab_update,
         .icon_type = IT_DICE,
-        .help      = "TEST ONLY: temporary EOS M 3x3 vertical sampling experiments.",
-        .help2     = "Normal: 0x800C=2. Test A: 0x800C=0. Test B: 0x800C=1.\n"
+        .help      = "TEST ONLY: temporary EOS M sensor sampling experiments.",
+        .help2     = "Normal: 800C=2, 8000=6. No Vertical Skip: 800C=0. 2-Line Vertical Skip: 800C=1. Test C: 800C=2, 8000=5.\n"
                       "Only active in the 3x3 3:2 mode. Values reset to Normal after reboot.",
     },
 };
