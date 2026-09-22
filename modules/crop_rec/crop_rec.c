@@ -5062,6 +5062,11 @@ static void update_patch()
 {
     if (CROP_PRESET_MENU)
     {
+        /* Open Gate is an EOS M-only Slim extension. Keep the legacy
+         * 1x3 backend menu bounded on the other DIGIC 5 models. */
+        if (!is_EOSM && crop_preset_1x3_res_menu > 3)
+            crop_preset_1x3_res_menu = 3;
+
         /* update preset */
         crop_preset = CROP_PRESET_MENU;
         
@@ -8341,7 +8346,9 @@ static LVINFO_UPDATE_FUNC(crop_info)
                     if (CROP_Full_Res) snprintf(buffer, sizeof(buffer), "FLV");
                     break;
                 case CROP_PRESET_1X3:
-                    if (AR_16_9)
+                    if (Anam_OpenGate)
+                        snprintf(buffer, sizeof(buffer), "OG");
+                    else if (AR_16_9)
                     {
                         if (Anam_Highest) snprintf(buffer, sizeof(buffer), "4.5K");
                         if (Anam_Higher)  snprintf(buffer, sizeof(buffer), "4.2K");
