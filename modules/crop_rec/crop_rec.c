@@ -1889,7 +1889,11 @@ static void FAST adtg_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
                 case CROP_PRESET_3X3:
                 if (is_650D || is_700D || is_100D || is_EOSM)
                 {
-                    adtg_new[2] = (struct adtg_new) {2, 0x800C, 0x2};
+                    /* TEST: disable vertical 3-line skipping.
+                     * 0x800C = 0 reads every vertical line.
+                     * Keep the rest of the 3x3 register set unchanged.
+                     */
+                    adtg_new[2] = (struct adtg_new) {2, 0x800C, 0x0};
                     adtg_new[3] = (struct adtg_new) {2, 0x8000, 0x6};
                     adtg_new[4] = (struct adtg_new) {2, 0x8183, 0x21};
                     adtg_new[5] = (struct adtg_new) {2, 0x8184, 0x7B};
