@@ -5731,7 +5731,17 @@ static MENU_UPDATE_FUNC(sampling_lab_update)
 
 static MENU_SELECT_FUNC(sampling_lab_select)
 {
+    int old_mode = sampling_lab_mode;
     sampling_lab_mode = MOD(COERCE(sampling_lab_mode, 0, 3) + delta, 4);
+
+    /* The sampling value is applied by adtg_hook, but Canon does not
+     * necessarily rewrite that register while the ML menu is open.
+     * Request the same EOS M Live View rebuild used by other settings,
+     * so changing the lab selection does not require playback -> LV. */
+    if (sampling_lab_mode != old_mode && is_EOSM)
+    {
+        eosm_lv_guard_request();
+    }
 }
 
 static struct menu_entry sampling_lab_menu[] = {
