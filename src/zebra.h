@@ -79,6 +79,7 @@ int should_draw_zoom_overlay();
 /* EOS M Touch to Zoom: touch takeover for Magic Zoom while enabled. */
 int zoom_overlay_touch_is_enabled(void);
 int zoom_overlay_touch_is_in_display(int x, int y);
+int zoom_overlay_touch_is_in_image_area(int x, int y);
 void zoom_overlay_touch_set_position(int x, int y);
 #endif
 
