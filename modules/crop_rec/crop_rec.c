@@ -6384,6 +6384,77 @@ int crop_rec_touch_adjust(int control, int delta)
 }
 
 __attribute__((used, noinline))
+int crop_rec_touch_get_image_rect(int *x0, int *y0, int *x1, int *y1)
+{
+    int num = 3;
+    int den = 2;
+
+    if (!x0 || !y0 || !x1 || !y1)
+        return 0;
+
+    /*
+     * Touch to Zoom follows the actual picture aperture shown by the EOS M
+     * crop preview. The LCD touch space is 720x480 and the camera preview
+     * is fitted inside that 3:2 area with pillarbox/letterbox bars.
+     */
+    if (CROP_PRESET_MENU == CROP_PRESET_1X1 && crop_preset_1x1_res_menu != 5)
+    {
+        switch (COERCE(slim_1x1_ar, 0, 4))
+        {
+            case 0: num = 233; den = 100; break;
+            case 1: num = 235; den = 100; break;
+            case 2: num = 16;  den = 9;   break;
+            case 3: num = 3;   den = 2;   break;
+            case 4: num = 4;   den = 3;   break;
+        }
+    }
+    else if (CROP_PRESET_MENU == CROP_PRESET_1X3 &&
+             crop_preset_1x3_res_menu != 3)
+    {
+        switch (COERCE(crop_preset_ar_menu, 0, 4))
+        {
+            case 0: num = 16;   den = 9;   break;
+            case 1: num = 2;    den = 1;   break;
+            case 2: num = 220;  den = 100; break;
+            case 3: num = 235;  den = 100; break;
+            case 4: num = 239;  den = 100; break;
+        }
+    }
+    else if (CROP_PRESET_MENU == CROP_PRESET_3X3)
+    {
+        switch (COERCE(crop_preset_ar_menu, 0, 4))
+        {
+            case 0: num = 16;  den = 9;   break;
+            case 1: num = 2;   den = 1;   break;
+            case 2: num = 220; den = 100; break;
+            case 3: num = 235; den = 100; break;
+            case 4: num = 239; den = 100; break;
+        }
+    }
+
+    if (num * 2 >= den * 3)
+    {
+        int h = (720 * den) / num;
+        h = COERCE(h, 1, 480);
+        *x0 = 0;
+        *x1 = 720;
+        *y0 = (480 - h) / 2;
+        *y1 = *y0 + h;
+    }
+    else
+    {
+        int w = (480 * num) / den;
+        w = COERCE(w, 1, 720);
+        *x0 = (720 - w) / 2;
+        *x1 = *x0 + w;
+        *y0 = 0;
+        *y1 = 480;
+    }
+
+    return 1;
+}
+
+__attribute__((used, noinline))
 int crop_rec_touch_get_value(int control, int slot, char *value, int size,
                              int *enabled_out)
 {
