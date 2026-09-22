@@ -4343,8 +4343,11 @@ static void draw_zoom_overlay(int dirty)
             break;
     }
 
-    /* (W<<1) should be 64-bit aligned for memset64 */
+    /* Keep the MZ draw rectangle inside the actual YUV buffer. */
     W &= ~3;
+    W = MIN(W, lv->width & ~3);
+    H = MIN(H, lv->height);
+    if (W < 4 || H < 4) return;
 
     // Magnification factor
     int X = zoom_overlay_x + 1;
@@ -4404,7 +4407,7 @@ static void draw_zoom_overlay(int dirty)
         h /= X;
         w &= ~3;    /* (w<<1) should be 64-bit aligned for memset64 */
         const int val_in_coerce_w = aff_x0_lv - (w>>1);
-        const int coerce_w = COERCE(val_in_coerce_w, 0, 720-w) & ~1;    /* should be 32-bit (2px) aligned for memset64 */
+        const int coerce_w = COERCE(val_in_coerce_w, 0, MAX(0, lv->width - w)) & ~1;    /* should be 32-bit (2px) aligned for memset64 */
         const int val_in_coerce_h1 = aff_y0_lv - (h>>1);
         const int val_in_coerce_h2 = aff_y0_lv + (h>>1);
 
@@ -4447,8 +4450,8 @@ static void draw_zoom_overlay(int dirty)
     }
 #endif
 
-    int x0c = COERCE(zb_x0_lv - (W>>1), 0, lv->width-W) & ~1;
-    int y0c = COERCE(zb_y0_lv - (H>>1), 0, lv->height-H);
+    int x0c = COERCE(zb_x0_lv - (W>>1), 0, MAX(0, lv->width - W)) & ~1;
+    int y0c = COERCE(zb_y0_lv - (H>>1), 0, MAX(0, lv->height - H));
 
     extern int focus_value;
     extern int focus_min_value;
@@ -4507,16 +4510,16 @@ static void draw_zoom_overlay(int dirty)
     H /= 2; //LCD res fix (half height)
     #endif
 
-    memset64(lvr + x0c + COERCE(0   + y0c, 0, 720) * lv->width, rawoff ? MZ_BLACK : MZ_GREEN, W<<1);
-    memset64(lvr + x0c + COERCE(1   + y0c, 0, 720) * lv->width, rawoff ? MZ_WHITE : MZ_GREEN, W<<1);
+    memset64(lvr + x0c + COERCE(0   + y0c, 0, MAX(0, lv->height - 1)) * lv->width, rawoff ? MZ_BLACK : MZ_GREEN, W<<1);
+    memset64(lvr + x0c + COERCE(1   + y0c, 0, MAX(0, lv->height - 1)) * lv->width, rawoff ? MZ_WHITE : MZ_GREEN, W<<1);
     if (!rawoff) {
-        memset64(lvr + x0c + COERCE(-2  + y0c, 0, 720) * lv->width, MZ_GREEN, W<<1);
-        memset64(lvr + x0c + COERCE(-1  + y0c, 0, 720) * lv->width, MZ_GREEN, W<<1);
-        memset64(lvr + x0c + COERCE(H   + y0c, 0, 720) * lv->width, MZ_GREEN, W<<1);
-        memset64(lvr + x0c + COERCE(H+1 + y0c, 0, 720) * lv->width, MZ_GREEN, W<<1);
+        memset64(lvr + x0c + COERCE(-2  + y0c, 0, MAX(0, lv->height - 1)) * lv->width, MZ_GREEN, W<<1);
+        memset64(lvr + x0c + COERCE(-1  + y0c, 0, MAX(0, lv->height - 1)) * lv->width, MZ_GREEN, W<<1);
+        memset64(lvr + x0c + COERCE(H   + y0c, 0, MAX(0, lv->height - 1)) * lv->width, MZ_GREEN, W<<1);
+        memset64(lvr + x0c + COERCE(H+1 + y0c, 0, MAX(0, lv->height - 1)) * lv->width, MZ_GREEN, W<<1);
     }
-    memset64(lvr + x0c + COERCE(H-2 + y0c, 0, 720) * lv->width, rawoff ? MZ_WHITE : MZ_GREEN, W<<1);
-    memset64(lvr + x0c + COERCE(H-1 + y0c, 0, 720) * lv->width, rawoff ? MZ_BLACK : MZ_GREEN, W<<1);
+    memset64(lvr + x0c + COERCE(H-2 + y0c, 0, MAX(0, lv->height - 1)) * lv->width, rawoff ? MZ_WHITE : MZ_GREEN, W<<1);
+    memset64(lvr + x0c + COERCE(H-1 + y0c, 0, MAX(0, lv->height - 1)) * lv->width, rawoff ? MZ_BLACK : MZ_GREEN, W<<1);
     #ifdef CONFIG_1100D
     H *= 2; // Undo it
     #endif
