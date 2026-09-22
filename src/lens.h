@@ -280,6 +280,7 @@ const char * lens_format_iso(int raw_iso);
 #define KELVIN_STEP 100
 void lens_set_kelvin(int k);
 void lens_set_wb_mode(int mode);
+int lens_get_wb_kelvin_ph(void);
 void lens_set_kelvin_value_only(int k);
 void lens_set_custom_wb_gains(int gain_R, int gain_G, int gain_B);
 
