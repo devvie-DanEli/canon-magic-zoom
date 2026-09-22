@@ -3031,12 +3031,16 @@ static inline uint32_t reg_override_1X3(uint32_t reg, uint32_t old_val)
         RAW_H         = 0x130 + reg_width;
         RAW_V         = 0xDB3 + reg_height;
 
-        /* EOS M has a documented minimum TimerA of 0x1FF in its
-         * working 1x3 paths. The historical 0x164 value came from the
-         * 700D 1080x3478 experiment and cannot be copied unchanged here.
-         * Keep the 23.976 target by compensating with TimerB. */
+        /* EOS M needs the 0x1FF TimerA floor, but a full-height
+         * 3478-line readout also needs the long TimerB used by the
+         * existing full-height 1x3/FLV path. The previous 0xA33 value
+         * was too short and could let recording start before valid RAW
+         * frames were available. Keep the bit-depth-specific FLV
+         * TimerB values as a conservative sensor-timing baseline. */
         TimerA        = 0x1FF + TimerA_Debug;
-        TimerB        = 0xA33 - fps_over;
+        TimerB        = OUTPUT_10BIT ? 0xf05-fps_over :
+                         (OUTPUT_12BIT || OUTPUT_11BIT) ? 0x112b-fps_over :
+                         OUTPUT_14BIT ? 0x1407-fps_over : 0;
 
         Preview_H     = 1080;
         Preview_V     = 3478;
@@ -8459,8 +8463,15 @@ static LVINFO_UPDATE_FUNC(crop_info)
         if (!buffer[0] && patch_active && crop_preset == CROP_PRESET_1X1 && CROP_1620p)
             snprintf(buffer, sizeof(buffer), "1620p");
 
-        if (raw_capture_info.binning_x + raw_capture_info.skipping_x == 1 &&
-            raw_capture_info.binning_y + raw_capture_info.skipping_y == 1)
+        /* Open Gate is already explicitly named above.  Do not append the
+         * generic 1:1 readout suffix while the raw metadata is still settling,
+         * otherwise the status bar becomes misleadingly "OG 1:1". */
+        if (Anam_OpenGate)
+        {
+            STR_APPEND(buffer, "%s1x3", buffer[0] ? " " : "");
+        }
+        else if (raw_capture_info.binning_x + raw_capture_info.skipping_x == 1 &&
+                 raw_capture_info.binning_y + raw_capture_info.skipping_y == 1)
         {
             STR_APPEND(buffer, "%s1:1", buffer[0] ? " " : "");
         }
