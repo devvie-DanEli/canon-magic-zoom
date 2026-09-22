@@ -69,8 +69,40 @@ void mlv_fill_wbal(mlv_wbal_hdr_t *hdr, uint64_t start_timestamp)
     mlv_set_timestamp((mlv_hdr_t *)hdr, start_timestamp);
     hdr->blockSize = sizeof(mlv_wbal_hdr_t);
 
-    hdr->wb_mode = lens_info.wb_mode;
-    hdr->kelvin = lens_info.kelvin;
+    /*
+     * AWB on EOS M does not provide a continuously updated Kelvin value
+     * through the normal LV WB property. MLV App uses WBAL.kelvin when
+     * wb_mode is WB_AUTO, so a stale 6000K value can otherwise become the
+     * visible default in post.
+     *
+     * Use Canon's photo-WB temperature property as a fallback snapshot when
+     * it is valid. This does not keep AWB running during RAW recording. It
+     * only captures a fixed temperature into the WBAL metadata at record
+     * start. Keep the original AUTO metadata if no usable fallback exists.
+     */
+    uint32_t wb_mode = lens_info.wb_mode;
+    uint32_t wb_kelvin = lens_info.kelvin;
+
+    if (wb_mode == WB_AUTO)
+    {
+        int ph_kelvin = lens_get_wb_kelvin_ph();
+        if (ph_kelvin >= KELVIN_MIN && ph_kelvin <= KELVIN_MAX)
+        {
+            wb_mode = WB_KELVIN;
+            wb_kelvin = (uint32_t)ph_kelvin;
+            trace_write(raw_rec_trace_ctx,
+                "[WBAL] AWB snapshot fallback: photo WB=%dK", ph_kelvin);
+        }
+        else
+        {
+            trace_write(raw_rec_trace_ctx,
+                "[WBAL] AWB snapshot fallback unavailable: photo WB=%d LV WB=%dK",
+                ph_kelvin, lens_info.kelvin);
+        }
+    }
+
+    hdr->wb_mode = wb_mode;
+    hdr->kelvin = wb_kelvin;
     hdr->wbgain_r = lens_info.WBGain_R;
     hdr->wbgain_g = lens_info.WBGain_G;
     hdr->wbgain_b = lens_info.WBGain_B;
