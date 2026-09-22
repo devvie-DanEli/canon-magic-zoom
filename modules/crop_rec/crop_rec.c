@@ -5707,7 +5707,7 @@ static struct menu_entry slim_info_button_menu[] = {
 /* Mode UI: 0=1x1, 1=1x3, 2=3x3, 3=LV (Full-Res LiveView). */
 static int slim_mode_ui = 0;
 static int slim_unified_preset = 1; /* Highest=0 Higher=1 Medium=2 */
-static int slim_bit_depth_ui = 1;   /* 0=10 1=12 2=14 → bit_depth_analog 3/1/0 */
+static int slim_bit_depth_ui = 2;   /* 0=10 1=11 2=12 3=14 → bit_depth_analog 3/2/1/0 */
 /* Crop register changes are applied asynchronously at frame boundaries.
  * Do not let direct-touch input start another transition while the previous
  * preview geometry is still settling. */
@@ -5870,9 +5870,10 @@ static void slim_crop_sync_from_backend(void)
         /* Keep AR; backend res comes from slim_crop_apply_3x3_from_ar. */
     }
 
-    if (OUTPUT_10BIT || OUTPUT_11BIT) slim_bit_depth_ui = 0;
-    else if (OUTPUT_12BIT) slim_bit_depth_ui = 1;
-    else slim_bit_depth_ui = 2; /* 14-bit */
+    if (OUTPUT_10BIT) slim_bit_depth_ui = 0;
+    else if (OUTPUT_11BIT) slim_bit_depth_ui = 1;
+    else if (OUTPUT_12BIT) slim_bit_depth_ui = 2;
+    else slim_bit_depth_ui = 3; /* 14-bit */
 }
 
 static void slim_crop_apply_unified_preset(void)
@@ -5921,9 +5922,9 @@ static void slim_crop_apply_mode(void)
 
 static void slim_crop_apply_bit_depth(void)
 {
-    static const int map[] = { 3, 1, 0 }; /* 10, 12, 14 */
+    static const int map[] = { 3, 2, 1, 0 }; /* 10, 11, 12, 14 */
     int prev = bit_depth_analog;
-    slim_bit_depth_ui = COERCE(slim_bit_depth_ui, 0, 2);
+    slim_bit_depth_ui = COERCE(slim_bit_depth_ui, 0, 3);
     bit_depth_analog = map[slim_bit_depth_ui];
     if (bit_depth_analog != prev)
         raw_invalidate_lv_calibration();
@@ -6304,7 +6305,7 @@ static MENU_SELECT_FUNC(slim_crop_bit_select)
 {
     /* Direct-touch arrows and menu L/R move in opposite directions:
      * 10 <-> 12 <-> 14, wrapping at the ends. */
-    slim_bit_depth_ui = MOD(slim_bit_depth_ui + (delta < 0 ? -1 : 1), 3);
+    slim_bit_depth_ui = MOD(slim_bit_depth_ui + (delta < 0 ? -1 : 1), 4);
     slim_crop_apply_bit_depth();
 }
 
@@ -6313,7 +6314,8 @@ static MENU_UPDATE_FUNC(slim_crop_bit_update)
     slim_crop_sync_from_backend();
     MENU_SET_VALUE("%s",
         slim_bit_depth_ui == 0 ? "10 Bit" :
-        slim_bit_depth_ui == 1 ? "12 Bit" : "14 Bit");
+        slim_bit_depth_ui == 1 ? "11 Bit" :
+        slim_bit_depth_ui == 2 ? "12 Bit" : "14 Bit");
     /* Never gate Bit Depth on lossless / other settings. */
 }
 
@@ -6500,7 +6502,7 @@ int crop_rec_memory_capture(int *mode, int *ar, int *res, int *fps, int *bit)
         *ar = COERCE(crop_preset_ar_menu, 0, 4);
     *res = COERCE(slim_unified_preset, 0, 2);
     *fps = COERCE(crop_preset_fps_menu, 0, 2);
-    *bit = COERCE(slim_bit_depth_ui, 0, 2);
+    *bit = COERCE(slim_bit_depth_ui, 0, 3);
     return 1;
 }
 
@@ -6517,7 +6519,7 @@ int crop_rec_memory_apply(int mode, int ar, int res, int fps, int bit)
         crop_preset_ar_menu = COERCE(ar, 0, 4);
     slim_unified_preset = COERCE(res, 0, 2);
     crop_preset_fps_menu = COERCE(fps, 0, 2);
-    slim_bit_depth_ui = COERCE(bit, 0, 2);
+    slim_bit_depth_ui = COERCE(bit, 0, 3);
 
     slim_crop_apply_mode();
     slim_crop_apply_bit_depth();
@@ -6601,8 +6603,8 @@ static struct menu_entry crop_rec_menu_eosm[] =
         .priv       = &slim_bit_depth_ui,
         .select     = slim_crop_bit_select,
         .update     = slim_crop_bit_update,
-        .max        = 2,
-        .choices    = CHOICES("10 Bit", "12 Bit", "14 Bit"),
+        .max        = 3,
+        .choices    = CHOICES("10 Bit", "11 Bit", "12 Bit", "14 Bit"),
         .edit_mode  = EM_INLINE_ADJUST,
         .depends_on = DEP_LIVEVIEW | DEP_MOVIE_MODE,
         .help       = "Lossless RAW bit depth. Always available.",
