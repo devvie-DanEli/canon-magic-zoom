@@ -529,11 +529,50 @@ static int handle_slim_rec_touch_block(struct event * event)
      */
     if (lvinfo_touch_editor_is_open() || mem_recall_panel_is_open())
     {
+        /* A Slim editor is modal. Half-shutter closes the editor/panel and
+         * then continues to the normal Magic Zoom handler, which can toggle
+         * Touch to Zoom back off. A touch outside an editor closes it without
+         * being reinterpreted as a zoom gesture. */
+        if (event->param == BGMT_PRESS_HALFSHUTTER)
+        {
+            if (lvinfo_touch_editor_is_open())
+                lvinfo_touch_editor_close();
+            if (mem_recall_panel_is_open())
+                mem_recall_panel_close();
+            slim_touch_tap_count = 0;
+            slim_touch_tap_deadline = 0;
+            slim_touch_lv_pressed = 0;
+            slim_touch_lv_control_consumed = 0;
+            return 1;
+        }
+
         switch (event->param)
         {
         case BGMT_TOUCH_1_FINGER:
-            slim_touch_lv_direct_editor(event);
+        {
+            int x, y;
+            if (!eosm_touch_get_xy(event, &x, &y))
+                return 0;
+
+            if (lvinfo_touch_editor_is_open())
+            {
+                int slot = -1;
+                int arrow = 0;
+
+                /* Only touches inside the currently-open editor are allowed
+                 * to adjust it. Everything else dismisses the editor. */
+                if (lvinfo_touch_editor_hit_test(x, y, &slot, &arrow))
+                    slim_touch_lv_direct_editor(event);
+                else
+                    lvinfo_touch_editor_close();
+
+                return 0;
+            }
+
+            /* Memory Recall has its own hit-testing/panel logic. */
+            mem_recall_panel_touch(x, y);
             return 0;
+        }
         case BGMT_TOUCH_2_FINGER:
         case BGMT_UNTOUCH_1_FINGER:
         case BGMT_UNTOUCH_2_FINGER:
