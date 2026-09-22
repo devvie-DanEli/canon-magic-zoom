@@ -75,6 +75,7 @@ CONFIG_INT("crop.bit_depth", bit_depth_analog, 1);
  * 1 = No Vertical Skip (ADTG 0x800C = 0)
  * 2 = 2-Line Vertical Skip (ADTG 0x800C = 1)
  * 3 = Test C (ADTG 0x800C = 2, 0x8000 = 5)
+ * 4 = Test D (Test C + CMOS7 = 0x812)
  */
 static int sampling_lab_mode = 0;
 
@@ -1559,6 +1560,11 @@ static void FAST cmos_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
                 }
                 if (mv1080 || mv1080_3_2) cmos_new[7] = 0x800;
                 cmos_new[5] = 0x20;
+
+                /* Sampling Lab Test D: Test C plus the historical CMOS7
+                 * +0x12 correction adapted to this 0x800 baseline. */
+                if (mv1080_3_2 && sampling_lab_mode == 4)
+                    cmos_new[7] = 0x812;
             break;
         }
     }
@@ -1927,6 +1933,8 @@ static void FAST adtg_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
             else if (sampling_lab_mode == 2)
                 adtg_new[24] = (struct adtg_new) {2, 0x800C, 1};
             else if (sampling_lab_mode == 3)
+                adtg_new[24] = (struct adtg_new) {2, 0x8000, 5};
+            else if (sampling_lab_mode == 4)
                 adtg_new[24] = (struct adtg_new) {2, 0x8000, 5};
         }
 
@@ -5732,7 +5740,7 @@ static MENU_UPDATE_FUNC(sampling_lab_update)
 static MENU_SELECT_FUNC(sampling_lab_select)
 {
     int old_mode = sampling_lab_mode;
-    sampling_lab_mode = MOD(COERCE(sampling_lab_mode, 0, 3) + delta, 4);
+    sampling_lab_mode = MOD(COERCE(sampling_lab_mode, 0, 4) + delta, 5);
 
     /* The sampling value is applied by adtg_hook, but Canon does not
      * necessarily rewrite that register while the ML menu is open.
@@ -5748,14 +5756,14 @@ static struct menu_entry sampling_lab_menu[] = {
     {
         .name      = "Sampling Lab",
         .priv      = &sampling_lab_mode,
-        .max       = 3,
-        .choices   = CHOICES("Normal 3x3", "No Vertical Skip", "2-Line Vertical Skip", "Test C: 8000=5"),
+        .max       = 4,
+        .choices   = CHOICES("Normal 3x3", "No Vertical Skip", "2-Line Vertical Skip", "Test C: 8000=5", "Test D: 8000=5 + CMOS7=0x812"),
         .edit_mode = EM_INLINE_ADJUST,
         .select    = sampling_lab_select,
         .update    = sampling_lab_update,
         .icon_type = IT_DICE,
         .help      = "TEST ONLY: temporary EOS M sensor sampling experiments.",
-        .help2     = "Normal: 800C=2, 8000=6. No Vertical Skip: 800C=0. 2-Line Vertical Skip: 800C=1. Test C: 800C=2, 8000=5.\n"
+        .help2     = "Normal: 800C=2, 8000=6. No Vertical Skip: 800C=0. 2-Line Vertical Skip: 800C=1. Test C: 800C=2, 8000=5. Test D: Test C + CMOS7=0x812.\n"
                       "Only active in the 3x3 3:2 mode. Values reset to Normal after reboot.",
     },
 };
