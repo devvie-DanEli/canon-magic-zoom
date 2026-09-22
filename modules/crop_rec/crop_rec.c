@@ -202,21 +202,55 @@ static MENU_UPDATE_FUNC(sampling_trace_value_update)
 static MENU_SELECT_FUNC(sampling_trace_dump_select)
 {
     int i;
+    int log_number;
+    unsigned size;
+    char log_filename[64];
 
-    printf("\n=== EOS M SAMPLING TRACE (%d unique regs) ===\n",
-        sampling_trace_count);
+    /* Save the trace to the card as a normal text log. Use numbered files so
+     * each capture is preserved for later comparison. */
+    for (log_number = 0; log_number < 100; log_number++)
+    {
+        snprintf(log_filename, sizeof(log_filename),
+            "ML/EOSM_SAMPLING_TRACE_%02d.LOG", log_number);
+
+        if (FIO_GetFileSize(log_filename, &size) != 0)
+            break;
+
+        if (size == 0)
+            break;
+    }
+
+    if (log_number >= 100)
+    {
+        NotifyBox(3000, "Sampling trace: too many log files");
+        return;
+    }
+
+    FILE *f = FIO_CreateFile(log_filename);
+    if (!f)
+    {
+        NotifyBox(3000, "Sampling trace: create failed");
+        return;
+    }
+
+    my_fprintf(f, "EOS M SAMPLING TRACE\n");
+    my_fprintf(f, "Sampling Lab mode: %d\n", sampling_lab_mode);
+    my_fprintf(f, "Unique native registers: %d\n\n", sampling_trace_count);
+    my_fprintf(f, "index,dst,register,value\n");
 
     for (i = 0; i < sampling_trace_count; i++)
     {
-        printf("%03d: dst=%u reg=0x%04X val=0x%04X (%u)\n",
+        my_fprintf(f, "%03d,0x%X,0x%04X,0x%04X\n",
             i,
             sampling_trace[i].dst,
             sampling_trace[i].reg,
-            sampling_trace[i].val,
             sampling_trace[i].val);
     }
 
-    printf("=== END EOS M SAMPLING TRACE ===\n\n");
+    my_fprintf(f, "\nEND EOS M SAMPLING TRACE\n");
+    FIO_CloseFile(f);
+
+    NotifyBox(4000, "Trace saved: %s", log_filename);
 }
 
 static struct menu_entry sampling_trace_register_menu[] = {
