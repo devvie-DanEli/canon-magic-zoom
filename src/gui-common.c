@@ -519,6 +519,30 @@ static int handle_slim_rec_touch_block(struct event * event)
 #ifdef FEATURE_MAGIC_ZOOM
     if (zoom_overlay_touch_is_enabled())
     {
+        /*
+         * A Slim status-control editor or Memory Recall panel is modal.
+         * Once opened, its touchscreen rectangle owns the next touches so
+         * arrows/buttons cannot fall back into Touch to Zoom.
+         */
+        if (lvinfo_touch_editor_is_open() || mem_recall_panel_is_open())
+        {
+            switch (event->param)
+            {
+            case BGMT_TOUCH_1_FINGER:
+                slim_touch_lv_direct_editor(event);
+                return 0;
+            case BGMT_TOUCH_2_FINGER:
+            case BGMT_UNTOUCH_1_FINGER:
+            case BGMT_UNTOUCH_2_FINGER:
+#ifdef BGMT_TOUCH_MOVE
+            case BGMT_TOUCH_MOVE:
+#endif
+                return 0;
+            default:
+                break;
+            }
+        }
+
         switch (event->param)
         {
         case BGMT_TOUCH_1_FINGER:
@@ -540,8 +564,6 @@ static int handle_slim_rec_touch_block(struct event * event)
             zoom_overlay_touch_screen_consumed = 1;
             zoom_overlay_touch_set_position(x, y);
 
-            if (lvinfo_touch_editor_is_open())
-                lvinfo_touch_editor_close();
             slim_touch_tap_count = 0;
             slim_touch_tap_deadline = 0;
             slim_touch_lv_pressed = 0;
