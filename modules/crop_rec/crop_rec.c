@@ -76,6 +76,7 @@ CONFIG_INT("crop.bit_depth", bit_depth_analog, 1);
  * 2 = 2-Line Vertical Skip (ADTG 0x800C = 1)
  * 3 = Test C (ADTG 0x800C = 2, 0x8000 = 5)
  * 4 = Test D (Test C + CMOS7 = 0x812)
+ * 5 = Test E (800C=2, 8000=6, 8183=0, 8184=0)
  */
 static int sampling_lab_mode = 0;
 
@@ -1936,6 +1937,11 @@ static void FAST adtg_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
                 adtg_new[24] = (struct adtg_new) {2, 0x8000, 5};
             else if (sampling_lab_mode == 4)
                 adtg_new[24] = (struct adtg_new) {2, 0x8000, 5};
+            else if (sampling_lab_mode == 5)
+            {
+                adtg_new[24] = (struct adtg_new) {2, 0x8183, 0};
+                adtg_new[25] = (struct adtg_new) {2, 0x8184, 0};
+            }
         }
 
         /* PowerSaveTiming & ReadOutTiming registers */
@@ -5740,7 +5746,7 @@ static MENU_UPDATE_FUNC(sampling_lab_update)
 static MENU_SELECT_FUNC(sampling_lab_select)
 {
     int old_mode = sampling_lab_mode;
-    sampling_lab_mode = MOD(COERCE(sampling_lab_mode, 0, 4) + delta, 5);
+    sampling_lab_mode = MOD(COERCE(sampling_lab_mode, 0, 5) + delta, 6);
 
     /* The sampling value is applied by adtg_hook, but Canon does not
      * necessarily rewrite that register while the ML menu is open.
@@ -5756,14 +5762,14 @@ static struct menu_entry sampling_lab_menu[] = {
     {
         .name      = "Sampling Lab",
         .priv      = &sampling_lab_mode,
-        .max       = 4,
-        .choices   = CHOICES("Normal 3x3", "No Vertical Skip", "2-Line Vertical Skip", "Test C: 8000=5", "Test D: 8000=5 + CMOS7=0x812"),
+        .max       = 5,
+        .choices   = CHOICES("Normal 3x3", "No Vertical Skip", "2-Line Vertical Skip", "Test C: 8000=5", "Test D: 8000=5 + CMOS7=0x812", "Test E: 8183/8184=0"),
         .edit_mode = EM_INLINE_ADJUST,
         .select    = sampling_lab_select,
         .update    = sampling_lab_update,
         .icon_type = IT_DICE,
         .help      = "TEST ONLY: temporary EOS M sensor sampling experiments.",
-        .help2     = "Normal: 800C=2, 8000=6. No Vertical Skip: 800C=0. 2-Line Vertical Skip: 800C=1. Test C: 800C=2, 8000=5. Test D: Test C + CMOS7=0x812.\n"
+        .help2     = "Normal: 800C=2, 8000=6. No Vertical Skip: 800C=0. 2-Line Vertical Skip: 800C=1. Test C: 800C=2, 8000=5. Test D: Test C + CMOS7=0x812. Test E: 800C=2, 8000=6, 8183=0, 8184=0.\n"
                       "Only active in the 3x3 3:2 mode. Values reset to Normal after reboot.",
     },
 };
