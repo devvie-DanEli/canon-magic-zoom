@@ -6,6 +6,7 @@ on:
     branches:
       - main
       - feature/eosm-photo-touch-profiles
+      - feature/eosm-opengate-11bit
   workflow_dispatch: {}
 
 jobs:
