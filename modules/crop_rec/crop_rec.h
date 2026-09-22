@@ -12,3 +12,6 @@ extern WEAK_FUNC(ret_0) int crop_rec_touch_adjust(int control, int delta);
 extern WEAK_FUNC(ret_0) int crop_rec_touch_get_value(int control, int slot,
                                                       char *value, int size,
                                                       int *enabled);
+/* Active on-screen picture bounds in 720x480 touch/BMP coordinates. */
+extern WEAK_FUNC(ret_0) int crop_rec_touch_get_image_rect(int *x0, int *y0,
+                                                          int *x1, int *y1);
