@@ -82,6 +82,119 @@ CONFIG_INT("crop.bit_depth", bit_depth_analog, 1);
  */
 static int sampling_lab_mode = 0;
 
+/* EOS M vertical-sensor investigation: native CMOS/ADTG write trace.
+ * This is diagnostic only. It records register values BEFORE crop_rec overrides
+ * them, so we can compare the camera's actual register traffic across modes. */
+#define SAMPLING_TRACE_MAX 128
+
+struct sampling_trace_entry
+{
+    uint32_t dst;
+    uint32_t reg;
+    uint32_t val;
+};
+
+static struct sampling_trace_entry sampling_trace[SAMPLING_TRACE_MAX];
+static int sampling_trace_count = 0;
+static int sampling_trace_enabled = 0;
+
+static void sampling_trace_clear(void)
+{
+    sampling_trace_count = 0;
+}
+
+static void sampling_trace_record(uint32_t dst, uint32_t reg, uint32_t val)
+{
+    int i;
+
+    if (!sampling_trace_enabled)
+        return;
+
+    for (i = 0; i < sampling_trace_count; i++)
+    {
+        if (sampling_trace[i].dst == dst &&
+            sampling_trace[i].reg == reg)
+        {
+            sampling_trace[i].val = val;
+            return;
+        }
+    }
+
+    if (sampling_trace_count < SAMPLING_TRACE_MAX)
+    {
+        sampling_trace[sampling_trace_count].dst = dst;
+        sampling_trace[sampling_trace_count].reg = reg;
+        sampling_trace[sampling_trace_count].val = val;
+        sampling_trace_count++;
+    }
+}
+
+static MENU_UPDATE_FUNC(sampling_trace_update)
+{
+    MENU_SET_VALUE("%s (%d regs)",
+        sampling_trace_enabled ? "ON" : "OFF",
+        sampling_trace_count);
+}
+
+static MENU_SELECT_FUNC(sampling_trace_select)
+{
+    sampling_trace_enabled = !sampling_trace_enabled;
+    sampling_trace_clear();
+    printf("EOS M Sampling Trace: %s\\n",
+        sampling_trace_enabled ? "ON" : "OFF");
+}
+
+static MENU_SELECT_FUNC(sampling_trace_clear_select)
+{
+    sampling_trace_clear();
+    printf("EOS M Sampling Trace: CLEARED\\n");
+}
+
+static MENU_SELECT_FUNC(sampling_trace_dump_select)
+{
+    int i;
+
+    printf("\\n=== EOS M SAMPLING TRACE (%d unique regs) ===\\n",
+        sampling_trace_count);
+
+    for (i = 0; i < sampling_trace_count; i++)
+    {
+        printf("%03d: dst=%u reg=0x%04X val=0x%04X (%u)\\n",
+            i,
+            sampling_trace[i].dst,
+            sampling_trace[i].reg,
+            sampling_trace[i].val,
+            sampling_trace[i].val);
+    }
+
+    printf("=== END EOS M SAMPLING TRACE ===\\n\\n");
+}
+
+static struct menu_entry sampling_trace_menu[] = {
+    {
+        .name      = "Capture native writes",
+        .priv      = &sampling_trace_enabled,
+        .max       = 1,
+        .choices   = CHOICES("OFF", "ON"),
+        .edit_mode = EM_INLINE_ADJUST,
+        .select    = sampling_trace_select,
+        .update    = sampling_trace_update,
+        .icon_type = IT_DICE,
+        .help      = "Diagnostic: record native EOS M CMOS/ADTG writes before crop_rec overrides.",
+        .help2     = "Turn ON, leave the menu, enter/refresh Live View or change modes, then return and use Dump trace.",
+    },
+    {
+        .name      = "Dump trace",
+        .select    = sampling_trace_dump_select,
+        .help      = "Print captured unique CMOS/ADTG register writes to the ML console.",
+    },
+    {
+        .name      = "Clear trace",
+        .select    = sampling_trace_clear_select,
+        .help      = "Clear the captured native register trace.",
+    },
+};
+
 // check raw.c
 extern int BitDepth_Analog;
 
@@ -1253,6 +1366,17 @@ static void FAST cmos_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
 
     uint16_t* data_buf = (uint16_t*) regs[0];
     int cmos_new[15] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
+
+    /* Record Canon's native CMOS writes before any crop_rec override. */
+    if (sampling_trace_enabled)
+    {
+        uint16_t* trace_buf = data_buf;
+        while (*trace_buf != 0xFFFF)
+        {
+            sampling_trace_record(0x100, (*trace_buf) >> 12, (*trace_buf) & 0x0FFF);
+            trace_buf++;
+        }
+    }
     
     if (is_5D3)
     {
@@ -1754,6 +1878,17 @@ static void FAST adtg_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
     uint32_t *data_buf = (uint32_t *) regs[1];
     int dst = cs & 0xF;
     
+    /* Record Canon's native ADTG writes before any crop_rec override. */
+    if (sampling_trace_enabled)
+    {
+        uint32_t *trace_buf = data_buf;
+        while (*trace_buf != 0xFFFFFFFF)
+        {
+            sampling_trace_record(dst, (*trace_buf) >> 16, (*trace_buf) & 0xFFFF);
+            trace_buf++;
+        }
+    }
+
     /* copy data into a buffer, to make the override temporary */
     /* that means: as soon as we stop executing the hooks, values are back to normal */
     static uint32_t copy[512];
@@ -9062,6 +9197,7 @@ static unsigned int crop_rec_init()
         menu_add("Settings", slim_info_button_menu, COUNT(slim_info_button_menu));
         menu_add("Settings", slim_more_hacks_menu, COUNT(slim_more_hacks_menu));
         menu_add("Settings", sampling_lab_menu, COUNT(sampling_lab_menu));
+        menu_add("Settings", sampling_trace_menu, COUNT(sampling_trace_menu));
         lvinfo_add_items(info_items, COUNT(info_items));
         return 0;
     }
