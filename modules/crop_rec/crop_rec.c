@@ -100,7 +100,7 @@ static int crop_preset_1x3_res = 0;
 #define Anam_Higher    (crop_preset_1x3_res == 1)
 #define Anam_Medium    (crop_preset_1x3_res == 2)
 #define Anam_FLV      (crop_preset_1x3_res == 3)
-#define Anam_OpenGate (crop_preset_1x3_res == 4)
+#define Anam_OpenGate (is_EOSM && crop_preset_1x3_res == 4)
 
 static CONFIG_INT("crop.preset_3x3", crop_preset_3x3_res_menu, 1);
 static int crop_preset_3x3_res = 0;
@@ -4729,7 +4729,7 @@ void SetAspectRatioCorrectionValues()
 
     /* Set default x5 mode values for mv1080 preset, Anam_FLV and Open Gate */
     if ((CROP_PRESET_MENU == CROP_PRESET_3X3 && (crop_preset_3x3_res == 1 || crop_preset_3x3_res == 2)) || // mv1080
-        (CROP_PRESET_MENU == CROP_PRESET_1X3 && (crop_preset_1x3_res == 3 || crop_preset_1x3_res == 4))) // full-height 1x3
+        (CROP_PRESET_MENU == CROP_PRESET_1X3 && (Anam_FLV || Anam_OpenGate))) // full-height 1x3
     {
         if (is_LCD_Output()){        YUV_LV_Buf = 0x1DF05A0; YUV_LV_S_V = 0x1E002B;}
         if (is_480p_Output()){       YUV_LV_Buf = 0x1830520; YUV_LV_S_V = 0x6100AC;}
@@ -4871,7 +4871,7 @@ static void FAST PATH_SelectPathDriveMode_hook(uint32_t* regs, uint32_t* stack, 
 
     if (CROP_PRESET_MENU == CROP_PRESET_1X3)
     {
-		if (crop_preset_1x3_res == 3 || crop_preset_1x3_res == 4) // full-height 1x3
+		if (Anam_FLV || Anam_OpenGate) // full-height 1x3
 		{
 			Shift_Preview = 0;
 			Clear_Artifacts = 0;
@@ -6242,9 +6242,10 @@ static MENU_SELECT_FUNC(slim_crop_ar_select)
         return;
     }
 
-    menu_numeric_toggle(&crop_preset_ar_menu, delta, 0, 4);
     if (slim_mode_ui == 1 && crop_preset_1x3_res_menu == 4)
         return; /* Open Gate: Aspect Ratio is fixed. */
+
+    menu_numeric_toggle(&crop_preset_ar_menu, delta, 0, 4);
 
     if (slim_mode_ui == 2)
         slim_crop_apply_3x3_from_ar();
@@ -6387,7 +6388,7 @@ static MENU_UPDATE_FUNC(slim_crop_fps_update)
 static MENU_SELECT_FUNC(slim_crop_bit_select)
 {
     /* Direct-touch arrows and menu L/R move in opposite directions:
-     * 10 <-> 12 <-> 14, wrapping at the ends. */
+     * 10 <-> 11 <-> 12 <-> 14, wrapping at the ends. */
     slim_bit_depth_ui = MOD(slim_bit_depth_ui + (delta < 0 ? -1 : 1), 4);
     slim_crop_apply_bit_depth();
 }
