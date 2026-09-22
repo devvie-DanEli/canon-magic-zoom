@@ -1522,10 +1522,21 @@ static void FAST cmos_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
                     cmos_new[7] = 0xB27;
                 }
             }
-                if (Anam_FLV || Anam_OpenGate)
+                if (Anam_FLV)
                 {
                     cmos_new[5] = 0x20 + CMOS_5_Debug;
                     cmos_new[7] = 0xC00 + CMOS_7_Debug;
+                }
+
+                /*
+                 * Safe Open Gate uses the proven EOS M 1x3 2.20:1 Highest
+                 * sensor window. Override after the selectable AR table so
+                 * the locked Open Gate UI does not inherit a stale AR.
+                 */
+                if (Anam_OpenGate)
+                {
+                    cmos_new[5] = 0x60 + CMOS_5_Debug;
+                    cmos_new[7] = 0xB25 + CMOS_7_Debug;
                 }
             break;
 
@@ -3023,30 +3034,26 @@ static inline uint32_t reg_override_1X3(uint32_t reg, uint32_t old_val)
 {
     if (Anam_OpenGate)
     {
-        /* Experimental historical 1080x3478 full-height 1x3 target.
-         * The current EOS M 1x3 register scheme changes horizontal RAW_H
-         * in roughly 4-pixel steps, so 1736 -> 1080 is 164 counts:
-         * 0x1D4 - 0xA4 = 0x130. TimerA/TimerB start from the historical
-         * 356 / 3749 target and retain the module's fps_over fine adjust. */
-        RAW_H         = 0x130 + reg_width;
-        RAW_V         = 0xDB3 + reg_height;
-
-        /* EOS M needs the 0x1FF TimerA floor, but a full-height
-         * 3478-line readout also needs the long TimerB used by the
-         * existing full-height 1x3/FLV path. The previous 0xA33 value
-         * was too short and could let recording start before valid RAW
-         * frames were available. Keep the bit-depth-specific FLV
-         * TimerB values as a conservative sensor-timing baseline. */
+        /*
+         * Safe Open Gate: use the EOS M's existing tested 1x3 2.20:1
+         * Highest profile rather than forcing the experimental 3478-line
+         * full-height readout. This keeps the useful 1x3 anti-aliasing/
+         * moire reduction while retaining the proven 23.976 FPS timing
+         * and continuous-recording path.
+         *
+         * Existing known-good profile:
+         *   1664x2268, TimerA 0x1FF, TimerB 0xA2D @ 23.976 FPS.
+         */
+        RAW_H         = 0x1C2 + reg_width;
+        RAW_V         = 0x8F9 + reg_height;
+        TimerB        = 0xA2D - fps_over;
         TimerA        = 0x1FF + TimerA_Debug;
-        TimerB        = OUTPUT_10BIT ? 0xf05-fps_over :
-                         (OUTPUT_12BIT || OUTPUT_11BIT) ? 0x112b-fps_over :
-                         OUTPUT_14BIT ? 0x1407-fps_over : 0;
 
-        Preview_H     = 1080;
-        Preview_V     = 3478;
-        Preview_R     = 0x1D000E;
-        YUV_HD_S_H    = 0x10501B5 + YUV_HD_S_H_width + (YUV_HD_S_H_height << 16);
-        YUV_HD_S_V    = 0x45015C + YUV_HD_S_V_width + (YUV_HD_S_V_height << 16);
+        Preview_H     = 1660;
+        Preview_V     = 2268;
+        Preview_R     = 0x1D000D;
+        YUV_HD_S_H    = 0x10501A3 + YUV_HD_S_H_width + (YUV_HD_S_H_height << 16);
+        YUV_HD_S_V    = 0x1050359 + YUV_HD_S_V_width + (YUV_HD_S_V_height << 16);
     }
     else if (Anam_FLV)
     {
@@ -4736,9 +4743,9 @@ void SetAspectRatioCorrectionValues()
         }
     }
 
-    /* Set default x5 mode values for mv1080 preset, Anam_FLV and Open Gate */
+    /* Set default x5 mode values for mv1080 preset and full-height FLV */
     if ((CROP_PRESET_MENU == CROP_PRESET_3X3 && (crop_preset_3x3_res == 1 || crop_preset_3x3_res == 2)) || // mv1080
-        (CROP_PRESET_MENU == CROP_PRESET_1X3 && (Anam_FLV || Anam_OpenGate))) // full-height 1x3
+        (CROP_PRESET_MENU == CROP_PRESET_1X3 && Anam_FLV)) // full-height FLV
     {
         if (is_LCD_Output()){        YUV_LV_Buf = 0x1DF05A0; YUV_LV_S_V = 0x1E002B;}
         if (is_480p_Output()){       YUV_LV_Buf = 0x1830520; YUV_LV_S_V = 0x6100AC;}
@@ -8034,14 +8041,14 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
         {
             zoom = 1;
 
-            if (Anam_FLV || Anam_OpenGate)
+            if (Anam_FLV)
             {
                 EngDrvOutLV(0xc0f11A88, 0x1);
                 YUV_HD_S_H    = 0x10501B5 + YUV_HD_S_H_width - (90 << 16);
                 YUV_HD_S_V    = 0x45015C + 800 + (1000 << 16);
                 CheckPreviewRegsValuesAndForce();
             }
-            else if (Anam_Higher || Anam_Highest)
+            else if (Anam_OpenGate || Anam_Higher || Anam_Highest)
             {
                 EngDrvOutLV(0xc0f11A88, 0x1);
                 YUV_HD_S_H    = 0x105015B + 4000 + (6000 << 16);
