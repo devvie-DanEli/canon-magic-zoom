@@ -3030,8 +3030,13 @@ static inline uint32_t reg_override_1X3(uint32_t reg, uint32_t old_val)
          * 356 / 3749 target and retain the module's fps_over fine adjust. */
         RAW_H         = 0x130 + reg_width;
         RAW_V         = 0xDB3 + reg_height;
-        TimerB        = 0xEA5 - fps_over;
-        TimerA        = 0x164 + TimerA_Debug;
+
+        /* EOS M has a documented minimum TimerA of 0x1FF in its
+         * working 1x3 paths. The historical 0x164 value came from the
+         * 700D 1080x3478 experiment and cannot be copied unchanged here.
+         * Keep the 23.976 target by compensating with TimerB. */
+        TimerA        = 0x1FF + TimerA_Debug;
+        TimerB        = 0xA33 - fps_over;
 
         Preview_H     = 1080;
         Preview_V     = 3478;
