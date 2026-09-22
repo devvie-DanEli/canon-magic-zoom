@@ -6476,7 +6476,8 @@ int crop_rec_touch_get_value(int control, int slot, char *value, int size,
     {
         snprintf(value, size, "%s",
             slim_bit_depth_ui == 0 ? "10 Bit" :
-            slim_bit_depth_ui == 1 ? "12 Bit" : "14 Bit");
+            slim_bit_depth_ui == 1 ? "11 Bit" :
+            slim_bit_depth_ui == 2 ? "12 Bit" : "14 Bit");
         enabled = 1;
     }
     else
