@@ -150,16 +150,65 @@ static MENU_SELECT_FUNC(sampling_trace_clear_select)
     printf("EOS M Sampling Trace: CLEARED\\n");
 }
 
+struct sampling_trace_key
+{
+    uint32_t dst;
+    uint32_t reg;
+    const char *name;
+};
+
+static struct sampling_trace_key sampling_trace_keys[] = {
+    {0xFFFFFFFF, 0x800C, "ADTG 800C"},
+    {0xFFFFFFFF, 0x8000, "ADTG 8000"},
+    {0xFFFFFFFF, 0x8183, "ADTG 8183"},
+    {0xFFFFFFFF, 0x8184, "ADTG 8184"},
+    {0x100,      1,      "CMOS 1"},
+    {0x100,      2,      "CMOS 2"},
+    {0x100,      5,      "CMOS 5"},
+    {0x100,      7,      "CMOS 7"},
+};
+
+static int sampling_trace_find(uint32_t dst, uint32_t reg, uint32_t *value)
+{
+    int i;
+
+    for (i = 0; i < sampling_trace_count; i++)
+    {
+        if ((dst == 0xFFFFFFFF || sampling_trace[i].dst == dst) &&
+            sampling_trace[i].reg == reg)
+        {
+            *value = sampling_trace[i].val;
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+static MENU_UPDATE_FUNC(sampling_trace_value_update)
+{
+    struct sampling_trace_key *key = entry->priv;
+    uint32_t value = 0;
+
+    if (!key)
+        return;
+
+    if (sampling_trace_find(key->dst, key->reg, &value))
+        MENU_SET_VALUE("0x%04X", value);
+    else
+        MENU_SET_VALUE("--");
+}
+
 static MENU_SELECT_FUNC(sampling_trace_dump_select)
 {
     int i;
 
-    printf("\\n=== EOS M SAMPLING TRACE (%d unique regs) ===\\n",
+    printf("\n=== EOS M SAMPLING TRACE (%d unique regs) ===\n",
         sampling_trace_count);
 
     for (i = 0; i < sampling_trace_count; i++)
     {
-        printf("%03d: dst=%u reg=0x%04X val=0x%04X (%u)\\n",
+        printf("%03d: dst=%u reg=0x%04X val=0x%04X (%u)\n",
             i,
             sampling_trace[i].dst,
             sampling_trace[i].reg,
@@ -167,8 +216,59 @@ static MENU_SELECT_FUNC(sampling_trace_dump_select)
             sampling_trace[i].val);
     }
 
-    printf("=== END EOS M SAMPLING TRACE ===\\n\\n");
+    printf("=== END EOS M SAMPLING TRACE ===\n\n");
 }
+
+static struct menu_entry sampling_trace_register_menu[] = {
+    {
+        .name      = "ADTG 800C",
+        .priv      = &sampling_trace_keys[0],
+        .update    = sampling_trace_value_update,
+        .help      = "Native EOS M value captured before crop_rec overrides.",
+    },
+    {
+        .name      = "ADTG 8000",
+        .priv      = &sampling_trace_keys[1],
+        .update    = sampling_trace_value_update,
+        .help      = "Native EOS M value captured before crop_rec overrides.",
+    },
+    {
+        .name      = "ADTG 8183",
+        .priv      = &sampling_trace_keys[2],
+        .update    = sampling_trace_value_update,
+        .help      = "Native EOS M value captured before crop_rec overrides.",
+    },
+    {
+        .name      = "ADTG 8184",
+        .priv      = &sampling_trace_keys[3],
+        .update    = sampling_trace_value_update,
+        .help      = "Native EOS M value captured before crop_rec overrides.",
+    },
+    {
+        .name      = "CMOS 1",
+        .priv      = &sampling_trace_keys[4],
+        .update    = sampling_trace_value_update,
+        .help      = "Native EOS M value captured before crop_rec overrides.",
+    },
+    {
+        .name      = "CMOS 2",
+        .priv      = &sampling_trace_keys[5],
+        .update    = sampling_trace_value_update,
+        .help      = "Native EOS M value captured before crop_rec overrides.",
+    },
+    {
+        .name      = "CMOS 5",
+        .priv      = &sampling_trace_keys[6],
+        .update    = sampling_trace_value_update,
+        .help      = "Native EOS M value captured before crop_rec overrides.",
+    },
+    {
+        .name      = "CMOS 7",
+        .priv      = &sampling_trace_keys[7],
+        .update    = sampling_trace_value_update,
+        .help      = "Native EOS M value captured before crop_rec overrides.",
+    },
+};
 
 static struct menu_entry sampling_trace_menu[] = {
     {
@@ -181,12 +281,17 @@ static struct menu_entry sampling_trace_menu[] = {
         .update    = sampling_trace_update,
         .icon_type = IT_DICE,
         .help      = "Diagnostic: record native EOS M CMOS/ADTG writes before crop_rec overrides.",
-        .help2     = "Turn ON, leave the menu, enter/refresh Live View or change modes, then return and use Dump trace.",
+        .help2     = "Turn ON, leave the menu, enter/refresh Live View or change modes, then open Native register values.",
+    },
+    {
+        .name      = "Native register values",
+        .children  = sampling_trace_register_menu,
+        .help      = "Captured Canon register values before crop_rec overrides.",
     },
     {
         .name      = "Dump trace",
         .select    = sampling_trace_dump_select,
-        .help      = "Print captured unique CMOS/ADTG register writes to the ML console.",
+        .help      = "Print the complete captured native CMOS/ADTG trace to the ML console.",
     },
     {
         .name      = "Clear trace",
