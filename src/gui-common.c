@@ -319,8 +319,13 @@ static int slim_touch_lv_direct_editor(struct event * event)
         int arrow = 0;
 
         if (!lvinfo_touch_editor_hit_test(x, y, &slot, &arrow))
-            lvinfo_touch_editor_close();
-        else if (arrow && slot >= 0)
+        {
+            /* The editor is modal while it is open. A stray touch outside
+             * its hit target must not dismiss it and then fall into Touch to
+             * Zoom during the same gesture. MENU is the explicit dismiss key. */
+            return 1;
+        }
+        if (arrow && slot >= 0)
             slim_touch_lv_change_field(field, slot, arrow);
         return 1;
     }
