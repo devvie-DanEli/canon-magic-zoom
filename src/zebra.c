@@ -392,6 +392,12 @@ static int zoom_overlay_touch_get_display_rect(int *x, int *y, int *w, int *h)
 
 int zoom_overlay_touch_is_enabled(void)
 {
+    /* Slim status editors are modal. Suspend both Touch to Zoom input and
+     * MZ rendering while an editor is open, then restore it automatically
+     * when the editor closes. */
+    if (lvinfo_touch_editor_is_open())
+        return 0;
+
     return lv && zoom_overlay_enabled && zoom_overlay_touch &&
            zoom_overlay_touch_active &&
            !gui_menu_shown() && get_global_draw() &&
