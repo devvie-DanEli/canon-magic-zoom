@@ -5811,9 +5811,6 @@ static struct menu_entry slim_info_button_menu[] = {
 };
 
 /* Mode UI: 0=1x1, 1=1x3, 2=3x3, 3=LV (Full-Res LiveView). */
-static int slim_mode_ui = 0;
-static int slim_unified_preset = 1; /* 1x3: Highest=0 Higher=1 Medium=2 Open Gate=3 */
-static int slim_bit_depth_ui = 2;   /* 0=10 1=11 2=12 3=14 → bit_depth_analog 3/2/1/0 */
 
 /* EOS M Sampling Lab: runtime-only test selection, never saved to ML config.
  * 0 = known-good 3x3 baseline (ADTG 0x800C = 2)
@@ -5821,6 +5818,11 @@ static int slim_bit_depth_ui = 2;   /* 0=10 1=11 2=12 3=14 → bit_depth_analog 
  * 2 = Test B (ADTG 0x800C = 1)
  */
 static int sampling_lab_vertical_mode = 0;
+
+static int slim_mode_ui = 0;
+static int slim_unified_preset = 1; /* 1x3: Highest=0 Higher=1 Medium=2 Open Gate=3 */
+static int slim_bit_depth_ui = 2;   /* 0=10 1=11 2=12 3=14 → bit_depth_analog 3/2/1/0 */
+
 /* Crop register changes are applied asynchronously at frame boundaries.
  * Do not let direct-touch input start another transition while the previous
  * preview geometry is still settling. */
