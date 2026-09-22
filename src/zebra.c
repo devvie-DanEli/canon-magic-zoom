@@ -392,12 +392,29 @@ int zoom_overlay_touch_is_enabled(void)
 
 int zoom_overlay_touch_is_in_display(int x, int y)
 {
-    /* No permanent dead zone. The current MZ window can be touched again
-     * to choose a new source point, including the initial top-left area. */
-    (void)x;
-    (void)y;
-    return 0;
+    /* Touch to Zoom should follow the actual image rectangle, not the
+     * letterbox/pillarbox regions that may surround it on EOS M crop modes. */
+    int left = os.x0;
+    int right = os.x_max;
+    int top = os.y0;
+    int bottom = os.y_max;
+    int bar_x = 0;
+    int bar_y = 0;
+
+    /* Keep this identical to the EOS M LV/HD mapping in vram.c. */
+    if (RECORDING && video_mode_resolution >= 2)
+        bar_x = os.off_43;
+    if (RECORDING && video_mode_resolution <= 1)
+        bar_y = os.off_169;
+
+    left += bar_x;
+    right -= bar_x;
+    top += bar_y;
+    bottom -= bar_y;
+
+    return x < left || x >= right || y < top || y >= bottom;
 }
+
 
 void zoom_overlay_touch_set_position(int x, int y)
 {
@@ -4428,10 +4445,29 @@ static void draw_zoom_overlay(int dirty)
          * redraw fight that appears when the box overlaps the bottom bar. */
         int touch_w = MAX(1, W * 720 / MAX(1, lv->width));
         int touch_h = MAX(1, H * 480 / MAX(1, lv->height));
-        int safe_x_min = touch_w / 2 + 2;
-        int safe_x_max = 719 - (touch_w - touch_w / 2) - 2;
-        int safe_y_min = touch_h / 2 + 2;
-        int safe_y_max = 479 - (touch_h - touch_h / 2) - 2;
+        int crop_bar_x = 0;
+        int crop_bar_y = 0;
+        int image_x_min = os.x0;
+        int image_x_max = os.x_max;
+        int image_y_min = os.y0;
+        int image_y_max = os.y_max;
+
+        /* Match vram.c: high-resolution movie modes can add pillarboxes,
+         * while lower-resolution modes can add 16:9 letterbox bars. */
+        if (RECORDING && video_mode_resolution >= 2)
+            crop_bar_x = os.off_43;
+        if (RECORDING && video_mode_resolution <= 1)
+            crop_bar_y = os.off_169;
+
+        image_x_min += crop_bar_x;
+        image_x_max -= crop_bar_x;
+        image_y_min += crop_bar_y;
+        image_y_max -= crop_bar_y;
+
+        int safe_x_min = image_x_min + touch_w / 2 + 2;
+        int safe_x_max = image_x_max - (touch_w - touch_w / 2) - 2;
+        int safe_y_min = image_y_min + touch_h / 2 + 2;
+        int safe_y_max = image_y_max - (touch_h - touch_h / 2) - 2;
         int top_bar = get_ml_topbar_pos();
         int bottom_bar = get_ml_bottombar_pos();
 
