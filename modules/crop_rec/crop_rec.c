@@ -268,6 +268,7 @@ static struct menu_entry sampling_trace_register_menu[] = {
         .update    = sampling_trace_value_update,
         .help      = "Native EOS M value captured before crop_rec overrides.",
     },
+    MENU_EOL,
 };
 
 static struct menu_entry sampling_trace_menu[] = {
