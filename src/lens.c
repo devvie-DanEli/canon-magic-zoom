@@ -1663,6 +1663,11 @@ lens_set_kelvin(int k)
     msleep(20);
 }
 
+int lens_get_wb_kelvin_ph(void)
+{
+    return (int)wb_kelvin_ph;
+}
+
 void lens_set_wb_mode(int mode)
 {
     mode = COERCE(mode, 0, 9);
