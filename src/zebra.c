@@ -392,8 +392,16 @@ int zoom_overlay_touch_is_enabled(void)
 
 int zoom_overlay_touch_is_in_display(int x, int y)
 {
-    /* Touch to Zoom should follow the actual image rectangle, not the
-     * letterbox/pillarbox regions that may surround it on EOS M crop modes. */
+    /* There is no permanent MZ dead zone. The visible box may move to keep
+     * clear of the Slim status bars and crop borders. */
+    (void)x;
+    (void)y;
+    return 0;
+}
+
+#ifdef CONFIG_EOSM
+int zoom_overlay_touch_is_in_image_area(int x, int y)
+{
     int left = os.x0;
     int right = os.x_max;
     int top = os.y0;
@@ -401,7 +409,7 @@ int zoom_overlay_touch_is_in_display(int x, int y)
     int bar_x = 0;
     int bar_y = 0;
 
-    /* Keep this identical to the EOS M LV/HD mapping in vram.c. */
+    /* Match the EOS M LV/HD mapping in vram.c. */
     if (RECORDING && video_mode_resolution >= 2)
         bar_x = os.off_43;
     if (RECORDING && video_mode_resolution <= 1)
@@ -412,8 +420,9 @@ int zoom_overlay_touch_is_in_display(int x, int y)
     top += bar_y;
     bottom -= bar_y;
 
-    return x < left || x >= right || y < top || y >= bottom;
+    return x >= left && x < right && y >= top && y < bottom;
 }
+#endif
 
 
 void zoom_overlay_touch_set_position(int x, int y)
