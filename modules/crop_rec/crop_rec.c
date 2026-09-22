@@ -5735,7 +5735,7 @@ static struct menu_entry sampling_lab_menu[] = {
         .select    = sampling_lab_vertical_select,
         .update    = sampling_lab_vertical_update,
         .icon_type = IT_DICE,
-        .help      = "Temporary EOS M 3x3 vertical sampling experiments.",
+        .help      = "TEST ONLY: temporary EOS M 3x3 vertical sampling experiments.",
         .help2     = "Normal: 0x800C=2. Test A: 0x800C=0. Test B: 0x800C=1.\n"
                       "Only active in the 3x3 3:2 mode. Values reset to Normal after reboot.",
     },
