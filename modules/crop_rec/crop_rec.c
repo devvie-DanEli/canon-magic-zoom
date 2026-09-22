@@ -82,6 +82,17 @@ CONFIG_INT("crop.bit_depth", bit_depth_analog, 1);
  */
 static int sampling_lab_mode = 0;
 
+/* Temporarily let Canon's native Movie 720p/1080p configuration pass through
+ * crop_rec while keeping the diagnostic trace active. Runtime-only. */
+static int sampling_native_passthrough = 0;
+
+/* forward declarations used by the diagnostic menu */
+static void sampling_native_release_crop_state(void);
+#ifdef CONFIG_EOSM
+static void eosm_lv_guard_clear(void);
+static void eosm_lv_guard_request(void);
+#endif
+
 /* EOS M vertical-sensor investigation: native CMOS/ADTG write trace.
  * This is diagnostic only. It records register values BEFORE crop_rec overrides
  * them, so we can compare the camera's actual register traffic across modes. */
@@ -148,6 +159,29 @@ static MENU_SELECT_FUNC(sampling_trace_clear_select)
 {
     sampling_trace_clear();
     printf("EOS M Sampling Trace: CLEARED\\n");
+}
+
+static MENU_SELECT_FUNC(sampling_native_passthrough_select)
+{
+    sampling_native_passthrough = !sampling_native_passthrough;
+
+    if (sampling_native_passthrough)
+    {
+        sampling_trace_clear();
+        sampling_trace_enabled = 1;
+#ifdef CONFIG_EOSM
+        eosm_lv_guard_clear();
+#endif
+        sampling_native_release_crop_state();
+        printf("EOS M Sampling Trace: NATIVE CANON PASSTHROUGH ON\\n");
+    }
+    else
+    {
+        printf("EOS M Sampling Trace: NATIVE CANON PASSTHROUGH OFF\\n");
+#ifdef CONFIG_EOSM
+        eosm_lv_guard_request();
+#endif
+    }
 }
 
 struct sampling_trace_key
@@ -306,6 +340,18 @@ static struct menu_entry sampling_trace_register_menu[] = {
 };
 
 static struct menu_entry sampling_trace_menu[] = {
+    {
+        .name      = "Native Canon Passthrough",
+        .priv      = &sampling_native_passthrough,
+        .max       = 1,
+        .choices   = CHOICES("OFF", "ON"),
+        .edit_mode = EM_INLINE_ADJUST,
+        .select    = sampling_native_passthrough_select,
+        .update    = sampling_trace_update,
+        .icon_type = IT_DICE,
+        .help      = "Temporarily disable crop_rec sensor/preview overrides for Canon's native Movie modes.",
+        .help2     = "Enable first, then use Canon's native 720p or 1080p Movie setting. Runtime-only; reboot returns to normal.",
+    },
     {
         .name      = "Capture native writes",
         .priv      = &sampling_trace_enabled,
@@ -1496,13 +1542,11 @@ int CMOS_7_Debug = 0;
 
 static void FAST cmos_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
 {
-    /* make sure we are in 1080p/720p mode */
-    if (!is_supported_mode())
-    {
-        /* looks like checking properties works fine for detecting
-         * changes in video mode, but not for detecting the zoom change */
+    int native_trace_only = sampling_native_passthrough && sampling_trace_enabled;
+
+    /* Allow native x1 Canon 720p/1080p writes through when passthrough is on. */
+    if (!is_supported_mode() && !native_trace_only)
         return;
-    }
 
     uint16_t* data_buf = (uint16_t*) regs[0];
     int cmos_new[15] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1};
@@ -1517,6 +1561,9 @@ static void FAST cmos_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
             trace_buf++;
         }
     }
+
+    if (native_trace_only)
+        return;
     
     if (is_5D3)
     {
@@ -1993,6 +2040,26 @@ static int shutter_blanking_idle;
 
 static void FAST adtg_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
 {
+    int native_trace_only = sampling_native_passthrough && sampling_trace_enabled;
+    uint32_t cs = regs[0];
+    uint32_t *data_buf = (uint32_t *) regs[1];
+    int dst = cs & 0xF;
+
+    /* Record Canon's native ADTG writes before any crop_rec override. */
+    if (sampling_trace_enabled)
+    {
+        uint32_t *trace_buf = data_buf;
+        while (*trace_buf != 0xFFFFFFFF)
+        {
+            sampling_trace_record(dst, (*trace_buf) >> 16, (*trace_buf) & 0xFFFF);
+            trace_buf++;
+        }
+    }
+
+    /* In passthrough, do not run FPS/shutter or sampling overrides. */
+    if (native_trace_only)
+        return;
+
     if (!is_supported_mode())
     {
         /* don't patch other video modes */
@@ -2009,25 +2076,9 @@ static void FAST adtg_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
         }
     }
 
-    /* This hook is called from the DebugMsg's in adtg_write,
-     * so if we change the register list address, it won't be able to override them.
-     * Workaround: let's call it here. */
+    /* This hook is called from DebugMsg's in adtg_write.
+     * Workaround: call the shutter/FPS override only in crop mode. */
     fps_override_shutter_blanking();
-
-    uint32_t cs = regs[0];
-    uint32_t *data_buf = (uint32_t *) regs[1];
-    int dst = cs & 0xF;
-    
-    /* Record Canon's native ADTG writes before any crop_rec override. */
-    if (sampling_trace_enabled)
-    {
-        uint32_t *trace_buf = data_buf;
-        while (*trace_buf != 0xFFFFFFFF)
-        {
-            sampling_trace_record(dst, (*trace_buf) >> 16, (*trace_buf) & 0xFFFF);
-            trace_buf++;
-        }
-    }
 
     /* copy data into a buffer, to make the override temporary */
     /* that means: as soon as we stop executing the hooks, values are back to normal */
@@ -4324,6 +4375,9 @@ static void * get_engio_reg_override_func()
 
 static void FAST engio_write_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
 {
+    if (sampling_native_passthrough)
+        return;
+
     uint32_t (*reg_override_func)(uint32_t, uint32_t) = 
         get_engio_reg_override_func();
 
@@ -4464,6 +4518,9 @@ static int change_buffer_now = 0;
 
 static void FAST EngDrvOut_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
 {
+    if (sampling_native_passthrough)
+        return;
+
     if (!is_supported_mode())
     {
         /* don't patch other video modes */
@@ -4659,6 +4716,9 @@ static void FAST EngDrvOut_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
 
 static void FAST EngDrvOuts_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
 {
+    if (sampling_native_passthrough)
+        return;
+
     if (!is_supported_mode())
     {
         /* don't patch other video modes */
@@ -5071,6 +5131,9 @@ void SetAspectRatioCorrectionValues()
 
 static void FAST PATH_SelectPathDriveMode_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
 {
+    if (sampling_native_passthrough)
+        return;
+
     /* we need to enable and set preview shifting and clearing artifacts values here especially for clear artifacts value */
     /* I don't know which function load shifting preview value, but it's being loaded and applied many times in LiveView, not just once. */
     /* clear artifacts value is being loaded very early before CMOS, ADTG, ENGIO, ENG_DRV_OUT, ENG_DRV_OUTS stuff */
@@ -5292,6 +5355,34 @@ static void FAST PATH_SelectPathDriveMode_hook(uint32_t* regs, uint32_t* stack, 
 
 static int patch_active = 0;
 
+static void sampling_native_release_crop_state(void)
+{
+    /* Remove only the persistent preview-memory patches. Keep the function
+     * hooks installed so native Canon writes can still be traced. */
+    if (Clear_Artifacts_ON)
+    {
+        unpatch_memory(ClearAddress);
+        Clear_Artifacts_ON = 0;
+    }
+
+    if (Center_Preview_ON)
+    {
+        unpatch_memory(ShiftAddress);
+        Center_Preview_ON = 0;
+    }
+
+    extern int kill_canon_gui_mode;
+    if (kill_canon_gui_mode != 0)
+    {
+        kill_canon_gui_mode = 0;
+        if (canon_gui_front_buffer_disabled())
+            canon_gui_enable_front_buffer(0);
+    }
+
+    patch_active = 0;
+    crop_preset = 0;
+}
+
 #ifdef CONFIG_EOSM
 /* EOS M Live View is rebuilt asynchronously after boot, Canon-menu return,
  * record-stop and zoom changes.  Keep the crop hooks quiet until the base
@@ -5391,6 +5482,9 @@ static void uninstall_patches()
 
 static void update_patch()
 {
+    if (sampling_native_passthrough)
+        return;
+
     if (CROP_PRESET_MENU)
     {
         /* Open Gate is an EOS M-only Slim extension. Keep the legacy
@@ -5467,6 +5561,9 @@ static void update_patch()
 /* otherwise you will end up with a halfway configured video mode that looks weird */
 PROP_HANDLER(PROP_LV_ACTION)
 {
+    if (sampling_native_passthrough)
+        return;
+
     update_patch();
     eosm_lv_guard_request();
 }
@@ -5474,6 +5571,9 @@ PROP_HANDLER(PROP_LV_ACTION)
 /* also try when switching zoom modes */
 PROP_HANDLER(PROP_LV_DISPSIZE)
 {
+    if (sampling_native_passthrough)
+        return;
+
     update_patch();
 #ifdef CONFIG_EOSM
     if (eosm_lv_guard_internal_zoom)
@@ -6810,6 +6910,9 @@ __attribute__((used, noinline))
 int crop_rec_touch_adjust(int control, int delta)
 {
     int old_irq = 0;
+
+    if (sampling_native_passthrough)
+        return 0;
     int now;
 
     if (!is_movie_mode() || RECORDING)
@@ -6866,6 +6969,9 @@ int crop_rec_touch_get_value(int control, int slot, char *value, int size,
                              int *enabled_out)
 {
     int enabled = 1;
+
+    if (sampling_native_passthrough)
+        return 0;
     int w, h;
 
     if (!value || size <= 0 || !enabled_out)
@@ -8040,6 +8146,10 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
 #endif
 
     int menu_shown = gui_menu_shown();
+
+    if (sampling_native_passthrough)
+        return CBR_RET_CONTINUE;
+
 #ifdef CONFIG_EOSM
     /* Cover every path back into Movie Live View, including Canon menus
      * (which may not set gui_menu_shown), recording stop and boot. */
@@ -8311,6 +8421,9 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
 static unsigned int crop_rec_keypress_cbr(unsigned int key)
 {
     extern int kill_canon_gui_mode;
+
+    if (sampling_native_passthrough)
+        return CBR_RET_CONTINUE;
 
 #ifdef CONFIG_EOSM
     /* The transition controller owns Live View until its post-x5 validation
