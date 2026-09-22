@@ -1751,7 +1751,7 @@ static void FAST adtg_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
     };
     
     /* expand this as required */
-    struct adtg_new adtg_new[24] = {{0}};
+    struct adtg_new adtg_new[28] = {{0}};
 
     /* scan for shutter blanking and make both zoom and non-zoom value equal */
     /* (the values are different when using FPS override with ADTG shutter override) */
@@ -1908,6 +1908,17 @@ static void FAST adtg_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
                 }
                 break; 
             }
+        }
+
+        /* EOS M Sampling Lab: override only the vertical sampling selector.
+         * Keep RAW dimensions, timing, CMOS window and preview geometry untouched.
+         * The known EOS M 3x3 baseline is 0x800C = 2. */
+        if (is_EOSM && crop_preset == CROP_PRESET_3X3 && mv1080_3_2)
+        {
+            if (sampling_lab_vertical_mode == 1)
+                adtg_new[24] = (struct adtg_new) {2, 0x800C, 0};
+            else if (sampling_lab_vertical_mode == 2)
+                adtg_new[24] = (struct adtg_new) {2, 0x800C, 1};
         }
 
         /* PowerSaveTiming & ReadOutTiming registers */
@@ -5697,6 +5708,39 @@ static struct menu_entry slim_more_hacks_menu[] = {
     },
 };
 
+/* EOS M Sampling Lab. This deliberately exposes only one sensor control first,
+ * so every experiment changes one thing from the known-good 3x3 baseline. */
+static MENU_UPDATE_FUNC(sampling_lab_vertical_update)
+{
+    if (sampling_lab_vertical_mode != 0 &&
+        !(crop_preset == CROP_PRESET_3X3 && mv1080_3_2))
+    {
+        MENU_SET_WARNING(MENU_WARN_ADVICE,
+            "Select Mode=3x3 and Aspect Ratio=3:2 first.");
+    }
+}
+
+static MENU_SELECT_FUNC(sampling_lab_vertical_select)
+{
+    sampling_lab_vertical_mode = MOD(COERCE(sampling_lab_vertical_mode, 0, 2) + delta, 3);
+}
+
+static struct menu_entry sampling_lab_menu[] = {
+    {
+        .name      = "Vertical Sampling",
+        .priv      = &sampling_lab_vertical_mode,
+        .max       = 2,
+        .choices   = CHOICES("Normal 3x3", "Test A", "Test B"),
+        .edit_mode = EM_INLINE_ADJUST,
+        .select    = sampling_lab_vertical_select,
+        .update    = sampling_lab_vertical_update,
+        .icon_type = IT_DICE,
+        .help      = "Temporary EOS M 3x3 vertical sampling experiments.",
+        .help2     = "Normal: 0x800C=2. Test A: 0x800C=0. Test B: 0x800C=1.\n"
+                      "Only active in the 3x3 3:2 mode. Values reset to Normal after reboot.",
+    },
+};
+
 /* Expo → Shutter range (EOS M slim; dial L/R like Mode / Aspect). */
 static struct menu_entry expo_shutter_range_eosm[] = {
     {
@@ -5770,6 +5814,13 @@ static struct menu_entry slim_info_button_menu[] = {
 static int slim_mode_ui = 0;
 static int slim_unified_preset = 1; /* 1x3: Highest=0 Higher=1 Medium=2 Open Gate=3 */
 static int slim_bit_depth_ui = 2;   /* 0=10 1=11 2=12 3=14 → bit_depth_analog 3/2/1/0 */
+
+/* EOS M Sampling Lab: runtime-only test selection, never saved to ML config.
+ * 0 = known-good 3x3 baseline (ADTG 0x800C = 2)
+ * 1 = Test A (ADTG 0x800C = 0)
+ * 2 = Test B (ADTG 0x800C = 1)
+ */
+static int sampling_lab_vertical_mode = 0;
 /* Crop register changes are applied asynchronously at frame boundaries.
  * Do not let direct-touch input start another transition while the previous
  * preview geometry is still settling. */
@@ -8975,6 +9026,7 @@ static unsigned int crop_rec_init()
         menu_add("Expo", expo_shutter_range_eosm, COUNT(expo_shutter_range_eosm));
         menu_add("Settings", slim_info_button_menu, COUNT(slim_info_button_menu));
         menu_add("Settings", slim_more_hacks_menu, COUNT(slim_more_hacks_menu));
+        menu_add("Settings", sampling_lab_menu, COUNT(sampling_lab_menu));
         lvinfo_add_items(info_items, COUNT(info_items));
         return 0;
     }
