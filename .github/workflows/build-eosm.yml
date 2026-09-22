@@ -7,6 +7,7 @@ on:
       - main
       - feature/eosm-photo-touch-profiles
       - feature/eosm-opengate-11bit
+      - feature/eosm-sampling-lab
   workflow_dispatch: {}
 
 jobs:
