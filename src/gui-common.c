@@ -527,10 +527,11 @@ static int handle_slim_rec_touch_block(struct event * event)
             if (!eosm_touch_get_xy(event, &x, &y))
                 break;
 
-            /* Touch to Zoom owns image-area touches only. Status-bar
-             * controls remain available for Memory, ISO, shutter, aperture,
-             * WB, FPS, and the other Slim Live View editors. */
-            if (lvinfo_touch_is_bar_area(y))
+            /* Touch to Zoom owns only the active picture area. Status-bar
+             * controls and crop/letterbox border areas fall through to the
+             * normal Slim touch router. */
+            if (lvinfo_touch_is_bar_area(y) ||
+                !zoom_overlay_touch_is_in_image_area(x, y))
             {
                 zoom_overlay_touch_screen_consumed = 0;
                 break;
