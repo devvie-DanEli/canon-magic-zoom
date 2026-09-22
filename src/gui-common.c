@@ -517,32 +517,38 @@ static int handle_slim_rec_touch_block(struct event * event)
 
 #ifdef CONFIG_EOSM
 #ifdef FEATURE_MAGIC_ZOOM
+    /*
+     * Slim status editors and Memory Recall are modal. Check them BEFORE
+     * Touch to Zoom so a newly opened box continues to receive all touches,
+     * even if the finger is over the picture area.
+     */
+    if (lvinfo_touch_editor_is_open() || mem_recall_panel_is_open())
+    {
+        switch (event->param)
+        {
+        case BGMT_TOUCH_1_FINGER:
+            slim_touch_lv_direct_editor(event);
+            return 0;
+        case BGMT_TOUCH_2_FINGER:
+        case BGMT_UNTOUCH_1_FINGER:
+        case BGMT_UNTOUCH_2_FINGER:
+#ifdef BGMT_TOUCH_MOVE
+        case BGMT_TOUCH_MOVE:
+#endif
+#ifdef BGMT_TOUCH_PINCH_START
+        case BGMT_TOUCH_PINCH_START:
+#endif
+#ifdef BGMT_TOUCH_PINCH_STOP
+        case BGMT_TOUCH_PINCH_STOP:
+#endif
+            return 0;
+        default:
+            break;
+        }
+    }
+
     if (zoom_overlay_touch_is_enabled())
     {
-        /*
-         * A Slim status-control editor or Memory Recall panel is modal.
-         * Once opened, its touchscreen rectangle owns the next touches so
-         * arrows/buttons cannot fall back into Touch to Zoom.
-         */
-        if (lvinfo_touch_editor_is_open() || mem_recall_panel_is_open())
-        {
-            switch (event->param)
-            {
-            case BGMT_TOUCH_1_FINGER:
-                slim_touch_lv_direct_editor(event);
-                return 0;
-            case BGMT_TOUCH_2_FINGER:
-            case BGMT_UNTOUCH_1_FINGER:
-            case BGMT_UNTOUCH_2_FINGER:
-#ifdef BGMT_TOUCH_MOVE
-            case BGMT_TOUCH_MOVE:
-#endif
-                return 0;
-            default:
-                break;
-            }
-        }
-
         switch (event->param)
         {
         case BGMT_TOUCH_1_FINGER:
