@@ -79,6 +79,12 @@ static int slim_touch_boot_tap_deadline;
 static int slim_touch_boot_pressed;
 static int slim_touch_pending_menu_change;
 static enum lvinfo_touch_field slim_touch_pending_field;
+#ifdef CONFIG_EOSM
+#ifdef FEATURE_MAGIC_ZOOM
+/* 1 while the current finger gesture was consumed by Touch to Zoom. */
+static int zoom_overlay_touch_screen_consumed;
+#endif
+#endif
 static int slim_touch_pending_slot;
 static int slim_touch_pending_sign;
 /* MODULE_FUNCTION requires the pointer variable and exported symbol to have
@@ -518,16 +524,21 @@ static int handle_slim_rec_touch_block(struct event * event)
         case BGMT_TOUCH_1_FINGER:
         {
             int x, y;
-            if (eosm_touch_get_xy(event, &x, &y) &&
-                !lvinfo_touch_is_bar_area(y))
+            if (!eosm_touch_get_xy(event, &x, &y))
+                break;
+
+            /* Touch to Zoom owns image-area touches only. Status-bar
+             * controls remain available for Memory, ISO, shutter, aperture,
+             * WB, FPS, and the other Slim Live View editors. */
+            if (lvinfo_touch_is_bar_area(y))
             {
-                zoom_overlay_touch_set_position(x, y);
+                zoom_overlay_touch_screen_consumed = 0;
+                break;
             }
 
-            /* Touch to Zoom deliberately takes ownership of the entire
-             * touchscreen while active, so Quick Screen, field editors,
-             * memory controls, Canon touch focus and tap gestures cannot
-             * compete with it. */
+            zoom_overlay_touch_screen_consumed = 1;
+            zoom_overlay_touch_set_position(x, y);
+
             if (lvinfo_touch_editor_is_open())
                 lvinfo_touch_editor_close();
             slim_touch_tap_count = 0;
@@ -536,21 +547,15 @@ static int handle_slim_rec_touch_block(struct event * event)
             slim_touch_lv_control_consumed = 0;
             return 0;
         }
-        case BGMT_TOUCH_2_FINGER:
         case BGMT_UNTOUCH_1_FINGER:
-        case BGMT_UNTOUCH_2_FINGER:
-#ifdef BGMT_TOUCH_MOVE
-        case BGMT_TOUCH_MOVE:
-#endif
-#ifdef BGMT_TOUCH_PINCH_START
-        case BGMT_TOUCH_PINCH_START:
-#endif
-#ifdef BGMT_TOUCH_PINCH_STOP
-        case BGMT_TOUCH_PINCH_STOP:
-#endif
-            slim_touch_lv_pressed = 0;
-            slim_touch_lv_control_consumed = 0;
-            return 0;
+            if (zoom_overlay_touch_screen_consumed)
+            {
+                zoom_overlay_touch_screen_consumed = 0;
+                slim_touch_lv_pressed = 0;
+                slim_touch_lv_control_consumed = 0;
+                return 0;
+            }
+            break;
         default:
             break;
         }
