@@ -51,6 +51,13 @@ extern int lut_preview_worker_needed(void);
 extern int slower_overlay;
 #endif
 
+#ifdef CONFIG_EOSM
+#ifdef FEATURE_MAGIC_ZOOM
+static int (*crop_rec_touch_get_image_rect)(int *, int *, int *, int *) =
+    MODULE_FUNCTION(crop_rec_touch_get_image_rect);
+#endif
+#endif
+
 #include "imgconv.h"
 #include "falsecolor.h"
 #include "histogram.h"
@@ -386,6 +393,7 @@ static int zoom_overlay_touch_get_display_rect(int *x, int *y, int *w, int *h)
 int zoom_overlay_touch_is_enabled(void)
 {
     return lv && zoom_overlay_enabled && zoom_overlay_touch &&
+           zoom_overlay_touch_active &&
            !gui_menu_shown() && get_global_draw() &&
            zoom_overlay_size != 3;
 }
@@ -400,27 +408,34 @@ int zoom_overlay_touch_is_in_display(int x, int y)
 }
 
 #ifdef CONFIG_EOSM
+int zoom_overlay_touch_get_image_rect(int *x0, int *y0, int *x1, int *y1)
+{
+    int lx = 0, ty = 0, rx = 720, by = 480;
+
+    if (!x0 || !y0 || !x1 || !y1)
+        return 0;
+
+    if (crop_rec_touch_get_image_rect &&
+        crop_rec_touch_get_image_rect(&lx, &ty, &rx, &by) &&
+        lx >= 0 && ty >= 0 && rx > lx && by > ty &&
+        rx <= 720 && by <= 480)
+    {
+        /* Crop module owns the actual aspect-ratio aperture. */
+    }
+
+    *x0 = lx;
+    *y0 = ty;
+    *x1 = rx;
+    *y1 = by;
+    return 1;
+}
+
 int zoom_overlay_touch_is_in_image_area(int x, int y)
 {
-    int left = os.x0;
-    int right = os.x_max;
-    int top = os.y0;
-    int bottom = os.y_max;
-    int bar_x = 0;
-    int bar_y = 0;
-
-    /* Match the EOS M LV/HD mapping in vram.c. */
-    if (RECORDING && video_mode_resolution >= 2)
-        bar_x = os.off_43;
-    if (RECORDING && video_mode_resolution <= 1)
-        bar_y = os.off_169;
-
-    left += bar_x;
-    right -= bar_x;
-    top += bar_y;
-    bottom -= bar_y;
-
-    return x >= left && x < right && y >= top && y < bottom;
+    int x0, y0, x1, y1;
+    if (!zoom_overlay_touch_get_image_rect(&x0, &y0, &x1, &y1))
+        return 1;
+    return x >= x0 && x < x1 && y >= y0 && y < y1;
 }
 #endif
 
@@ -4384,8 +4399,8 @@ static void draw_zoom_overlay(int dirty)
     if (zoom_overlay_touch_active)
     {
         /* EOS M touch coordinates are 720x480 BMP space. */
-        zb_x0_lv = zoom_overlay_touch_x * lv->width / 720;
-        zb_y0_lv = zoom_overlay_touch_y * lv->height / 480;
+        zb_x0_lv = BM2LV_X(zoom_overlay_touch_x);
+        zb_y0_lv = BM2LV_Y(zoom_overlay_touch_y);
     }
     else
     {
@@ -4454,31 +4469,20 @@ static void draw_zoom_overlay(int dirty)
          * redraw fight that appears when the box overlaps the bottom bar. */
         int touch_w = MAX(1, W * 720 / MAX(1, lv->width));
         int touch_h = MAX(1, H * 480 / MAX(1, lv->height));
-        int crop_bar_x = 0;
-        int crop_bar_y = 0;
-        int image_x_min = os.x0;
-        int image_x_max = os.x_max;
-        int image_y_min = os.y0;
-        int image_y_max = os.y_max;
+        int image_x_min, image_y_min, image_x_max, image_y_max;
+        int top_bar = get_ml_topbar_pos();
+        int bottom_bar = get_ml_bottombar_pos();
 
-        /* Match vram.c: high-resolution movie modes can add pillarboxes,
-         * while lower-resolution modes can add 16:9 letterbox bars. */
-        if (RECORDING && video_mode_resolution >= 2)
-            crop_bar_x = os.off_43;
-        if (RECORDING && video_mode_resolution <= 1)
-            crop_bar_y = os.off_169;
+        zoom_overlay_touch_get_image_rect(
+            &image_x_min, &image_y_min, &image_x_max, &image_y_max);
 
-        image_x_min += crop_bar_x;
-        image_x_max -= crop_bar_x;
-        image_y_min += crop_bar_y;
-        image_y_max -= crop_bar_y;
-
+        /* The box itself must fit entirely inside the actual picture aperture.
+         * This prevents writes into letterbox/pillarbox YUV regions, where
+         * Canon may not refresh the pixels and MZ trails can become permanent. */
         int safe_x_min = image_x_min + touch_w / 2 + 2;
         int safe_x_max = image_x_max - (touch_w - touch_w / 2) - 2;
         int safe_y_min = image_y_min + touch_h / 2 + 2;
         int safe_y_max = image_y_max - (touch_h - touch_h / 2) - 2;
-        int top_bar = get_ml_topbar_pos();
-        int bottom_bar = get_ml_bottombar_pos();
 
         if (top_bar > 0)
             safe_y_min = MAX(safe_y_min, top_bar + 52 + touch_h / 2);
@@ -4490,8 +4494,8 @@ static void draw_zoom_overlay(int dirty)
         int display_y = COERCE(zoom_overlay_touch_y, safe_y_min,
                                MAX(safe_y_min, safe_y_max));
 
-        zb_x0_lv = display_x * lv->width / 720;
-        zb_y0_lv = display_y * lv->height / 480;
+        zb_x0_lv = BM2LV_X(display_x);
+        zb_y0_lv = BM2LV_Y(display_y);
     }
 #endif
 
@@ -4520,8 +4524,8 @@ static void draw_zoom_overlay(int dirty)
     {
         /* The touch coordinate chooses the SOURCE of the magnified image.
          * Keep the Magic Zoom window itself at its configured position. */
-        int touch_x_lv = zoom_overlay_touch_x * lv->width / 720;
-        int touch_y_lv = zoom_overlay_touch_y * lv->height / 480;
+        int touch_x_lv = BM2LV_X(zoom_overlay_touch_x);
+        int touch_y_lv = BM2LV_Y(zoom_overlay_touch_y);
         source_x_hd = LV2HD_X(touch_x_lv);
         source_y_hd = LV2HD_Y(touch_y_lv);
     }
