@@ -99,7 +99,8 @@ static int crop_preset_1x3_res = 0;
 #define Anam_Highest   (crop_preset_1x3_res == 0)
 #define Anam_Higher    (crop_preset_1x3_res == 1)
 #define Anam_Medium    (crop_preset_1x3_res == 2)
-#define Anam_FLV    (crop_preset_1x3_res == 3)
+#define Anam_FLV      (crop_preset_1x3_res == 3)
+#define Anam_OpenGate (crop_preset_1x3_res == 4)
 
 static CONFIG_INT("crop.preset_3x3", crop_preset_3x3_res_menu, 1);
 static int crop_preset_3x3_res = 0;
@@ -1521,7 +1522,7 @@ static void FAST cmos_hook(uint32_t* regs, uint32_t* stack, uint32_t pc)
                     cmos_new[7] = 0xB27;
                 }
             }
-                if (Anam_FLV)
+                if (Anam_FLV || Anam_OpenGate)
                 {
                     cmos_new[5] = 0x20 + CMOS_5_Debug;
                     cmos_new[7] = 0xC00 + CMOS_7_Debug;
@@ -3020,7 +3021,25 @@ static inline uint32_t reg_override_1X1(uint32_t reg, uint32_t old_val)
 
 static inline uint32_t reg_override_1X3(uint32_t reg, uint32_t old_val)
 {
-    if (Anam_FLV)
+    if (Anam_OpenGate)
+    {
+        /* Experimental historical 1080x3478 full-height 1x3 target.
+         * The current EOS M 1x3 register scheme changes horizontal RAW_H
+         * in roughly 4-pixel steps, so 1736 -> 1080 is 164 counts:
+         * 0x1D4 - 0xA4 = 0x130. TimerA/TimerB start from the historical
+         * 356 / 3749 target and retain the module's fps_over fine adjust. */
+        RAW_H         = 0x130 + reg_width;
+        RAW_V         = 0xDB3 + reg_height;
+        TimerB        = 0xEA5 - fps_over;
+        TimerA        = 0x164 + TimerA_Debug;
+
+        Preview_H     = 1080;
+        Preview_V     = 3478;
+        Preview_R     = 0x1D000E;
+        YUV_HD_S_H    = 0x10501B5 + YUV_HD_S_H_width + (YUV_HD_S_H_height << 16);
+        YUV_HD_S_V    = 0x45015C + YUV_HD_S_V_width + (YUV_HD_S_V_height << 16);
+    }
+    else if (Anam_FLV)
     {
         RAW_H         = 0x1D4 + reg_width;  // from mv1080 mode
         RAW_V         = 0xDB3 + reg_height;
@@ -4708,9 +4727,9 @@ void SetAspectRatioCorrectionValues()
         }
     }
 
-    /* Set default x5 mode values for mv1080 preset, also for Anam_FLV */
+    /* Set default x5 mode values for mv1080 preset, Anam_FLV and Open Gate */
     if ((CROP_PRESET_MENU == CROP_PRESET_3X3 && (crop_preset_3x3_res == 1 || crop_preset_3x3_res == 2)) || // mv1080
-        (CROP_PRESET_MENU == CROP_PRESET_1X3 && crop_preset_1x3_res == 3))   // Anam_FLV
+        (CROP_PRESET_MENU == CROP_PRESET_1X3 && (crop_preset_1x3_res == 3 || crop_preset_1x3_res == 4))) // full-height 1x3
     {
         if (is_LCD_Output()){        YUV_LV_Buf = 0x1DF05A0; YUV_LV_S_V = 0x1E002B;}
         if (is_480p_Output()){       YUV_LV_Buf = 0x1830520; YUV_LV_S_V = 0x6100AC;}
@@ -4852,7 +4871,7 @@ static void FAST PATH_SelectPathDriveMode_hook(uint32_t* regs, uint32_t* stack, 
 
     if (CROP_PRESET_MENU == CROP_PRESET_1X3)
     {
-		if (crop_preset_1x3_res == 3) // Anam_FLV
+		if (crop_preset_1x3_res == 3 || crop_preset_1x3_res == 4) // full-height 1x3
 		{
 			Shift_Preview = 0;
 			Clear_Artifacts = 0;
@@ -5171,7 +5190,10 @@ static MENU_UPDATE_FUNC(crop_update)
             }
             if (CROP_PRESET_MENU == CROP_PRESET_1X3)
             {
-                MENU_SET_VALUE("%s %s", (crop_preset_1x3_res_menu == 0 && crop_preset_ar_menu == 0) ? "4.5K"  : 
+                if (is_EOSM && crop_preset_1x3_res_menu == 4)
+                    MENU_SET_VALUE("Open Gate 1x3");
+                else
+                    MENU_SET_VALUE("%s %s", (crop_preset_1x3_res_menu == 0 && crop_preset_ar_menu == 0) ? "4.5K"  : 
                                         (crop_preset_1x3_res_menu == 1 && crop_preset_ar_menu == 0) ? "4.2K"  :
                                         (crop_preset_1x3_res_menu == 2 && crop_preset_ar_menu == 0) ? "UHD"   :
                                         (crop_preset_1x3_res_menu == 0 && crop_preset_ar_menu == 1) ? "4.8K"  :
@@ -5280,6 +5302,13 @@ static MENU_UPDATE_FUNC(crop_preset_1x1_res_update)
 
 static MENU_UPDATE_FUNC(crop_preset_1x3_res_update)
 {
+    if (is_EOSM && crop_preset_1x3_res_menu == 4)
+    {
+        MENU_SET_VALUE("Open Gate");
+        MENU_SET_HELP("1080x3478 @ 23.976 FPS (experimental full-height 1x3).");
+        return;
+    }
+
     if (crop_preset_ar_menu == 0) // AR_16_9
     {
         if (crop_preset_1x3_res_menu == 0) // Anam_Highest
@@ -5620,7 +5649,7 @@ static MENU_UPDATE_FUNC(fix_dual_iso_flicker_update)
 
 /* ---- EOS M slim Crop Mode (single screen) ----
  * Mode / Aspect / Preset drive recording config; Resolution is read-only;
- * Frame Rate cycles only valid rates; Bit Depth stays 14/12/10 always.
+ * Frame Rate cycles only valid rates; Bit Depth offers 10/11/12/14-bit.
  * Module builds lack CONFIG_SLIM_MENUS — gate with is_EOSM. */
 
 static struct menu_entry slim_more_hacks_menu[] = {
@@ -5706,8 +5735,8 @@ static struct menu_entry slim_info_button_menu[] = {
 
 /* Mode UI: 0=1x1, 1=1x3, 2=3x3, 3=LV (Full-Res LiveView). */
 static int slim_mode_ui = 0;
-static int slim_unified_preset = 1; /* Highest=0 Higher=1 Medium=2 */
-static int slim_bit_depth_ui = 1;   /* 0=10 1=12 2=14 → bit_depth_analog 3/1/0 */
+static int slim_unified_preset = 1; /* 1x3: Highest=0 Higher=1 Medium=2 Open Gate=3 */
+static int slim_bit_depth_ui = 2;   /* 0=10 1=11 2=12 3=14 → bit_depth_analog 3/2/1/0 */
 /* Crop register changes are applied asynchronously at frame boundaries.
  * Do not let direct-touch input start another transition while the previous
  * preview geometry is still settling. */
@@ -5736,8 +5765,8 @@ static int slim_preset_choice_count(void)
         /* 1x1: only 2.35:1 has Higher + Highest */
         return (slim_1x1_ar == 1) ? 2 : 1;
     }
-    /* 1x3: Highest / Higher / Medium */
-    return 3;
+    /* 1x3: Highest / Higher / Medium / Open Gate */
+    return 4;
 }
 
 /* Map 3x3 Aspect Ratio → backend High FPS (0) or mv1080 3:2 (2). */
@@ -5861,7 +5890,12 @@ static void slim_crop_sync_from_backend(void)
     else if (CROP_PRESET_MENU == CROP_PRESET_1X3)
     {
         slim_mode_ui = 1;
-        slim_unified_preset = COERCE(crop_preset_1x3_res_menu, 0, 2);
+        if (is_EOSM && crop_preset_1x3_res_menu == 4)
+            slim_unified_preset = 3; /* Open Gate */
+        else if (crop_preset_1x3_res_menu == 3)
+            slim_unified_preset = 2; /* legacy Full-Res LV is not a Slim choice */
+        else
+            slim_unified_preset = COERCE(crop_preset_1x3_res_menu, 0, 2);
     }
     else if (CROP_PRESET_MENU == CROP_PRESET_3X3)
     {
@@ -5870,9 +5904,10 @@ static void slim_crop_sync_from_backend(void)
         /* Keep AR; backend res comes from slim_crop_apply_3x3_from_ar. */
     }
 
-    if (OUTPUT_10BIT || OUTPUT_11BIT) slim_bit_depth_ui = 0;
-    else if (OUTPUT_12BIT) slim_bit_depth_ui = 1;
-    else slim_bit_depth_ui = 2; /* 14-bit */
+    if (OUTPUT_10BIT) slim_bit_depth_ui = 0;
+    else if (OUTPUT_11BIT) slim_bit_depth_ui = 1;
+    else if (OUTPUT_12BIT) slim_bit_depth_ui = 2;
+    else slim_bit_depth_ui = 3; /* 14-bit */
 }
 
 static void slim_crop_apply_unified_preset(void)
@@ -5887,9 +5922,9 @@ static void slim_crop_apply_unified_preset(void)
         slim_crop_apply_3x3_from_ar();
         return;
     }
-    slim_unified_preset = COERCE(slim_unified_preset, 0, 2);
+    slim_unified_preset = COERCE(slim_unified_preset, 0, 3);
     if (slim_mode_ui == 1 || CROP_PRESET_MENU == CROP_PRESET_1X3)
-        crop_preset_1x3_res_menu = slim_unified_preset;
+        crop_preset_1x3_res_menu = (slim_unified_preset == 3) ? 4 : slim_unified_preset;
 }
 
 static void slim_crop_apply_mode(void)
@@ -5921,9 +5956,9 @@ static void slim_crop_apply_mode(void)
 
 static void slim_crop_apply_bit_depth(void)
 {
-    static const int map[] = { 3, 1, 0 }; /* 10, 12, 14 */
+    static const int map[] = { 3, 2, 1, 0 }; /* 10, 11, 12, 14 */
     int prev = bit_depth_analog;
-    slim_bit_depth_ui = COERCE(slim_bit_depth_ui, 0, 2);
+    slim_bit_depth_ui = COERCE(slim_bit_depth_ui, 0, 3);
     bit_depth_analog = map[slim_bit_depth_ui];
     if (bit_depth_analog != prev)
         raw_invalidate_lv_calibration();
@@ -5947,8 +5982,21 @@ static void slim_crop_expected_res(int *w, int *h)
 
     if (CROP_PRESET_MENU == CROP_PRESET_1X3)
     {
-        int p = COERCE(crop_preset_1x3_res_menu, 0, 2);
+        int p = crop_preset_1x3_res_menu;
         int ar = crop_preset_ar_menu;
+        if (is_EOSM && p == 4)
+        {
+            *w = 1080;
+            *h = 3478;
+            return;
+        }
+        if (p == 3)
+        {
+            *w = 1736;
+            *h = 3478;
+            return;
+        }
+        p = COERCE(p, 0, 2);
         if (ar == 0) { /* 16:9 */
             if (p == 0) { *w = 1504; *h = 2538; }
             else if (p == 1) { *w = 1376; *h = 2322; }
@@ -6006,8 +6054,11 @@ static int slim_crop_fps_mask(void)
 
     if (CROP_PRESET_MENU == CROP_PRESET_1X3)
     {
-        int p = COERCE(crop_preset_1x3_res_menu, 0, 2);
+        int p = crop_preset_1x3_res_menu;
         int ar = crop_preset_ar_menu;
+        if (is_EOSM && p == 4)
+            return 0x1;                         /* Open Gate: fixed 23.976 target */
+        p = COERCE(p, 0, 2);
         if (p == 0) return 0x1;                 /* Highest: fixed ~24 only */
         if (p == 1 && ar == 0) return 0x1;       /* Higher 16:9: 23.976 only */
         return 0x1 | 0x2;                       /* Higher/Medium elsewhere: 24+25 */
@@ -6077,6 +6128,16 @@ static MENU_SELECT_FUNC(slim_crop_preset_select)
         return;
     }
 
+    if (n == 4)
+    {
+        /* Open Gate is the fourth 1x3 Slim choice. Always cycle through all
+         * four entries; the legacy Full-Res LV backend entry remains hidden. */
+        slim_unified_preset = MOD(slim_unified_preset + 1, 4);
+        slim_crop_apply_unified_preset();
+        slim_crop_clamp_fps();
+        return;
+    }
+
     if (slim_unified_preset == 2)
         slim_unified_preset = 1;      /* Medium → Higher */
     else if (slim_unified_preset == 1)
@@ -6110,6 +6171,20 @@ static MENU_UPDATE_FUNC(slim_crop_preset_update)
         return;
     }
 
+    if (slim_mode_ui == 1 && crop_preset_1x3_res_menu == 3)
+    {
+        MENU_SET_VALUE("Full-Res LV");
+        MENU_SET_ENABLED(1);
+        return;
+    }
+
+    if (slim_mode_ui == 1 && crop_preset_1x3_res_menu == 4)
+    {
+        MENU_SET_VALUE("Open Gate");
+        MENU_SET_ENABLED(1);
+        return;
+    }
+
     MENU_SET_VALUE("%s",
         slim_unified_preset == 0 ? "Highest" :
         slim_unified_preset == 1 ? "Higher" : "Medium");
@@ -6129,6 +6204,12 @@ static MENU_UPDATE_FUNC(slim_crop_ar_update)
         slim_1x1_ar = COERCE(slim_1x1_ar, 0, 4);
         MENU_SET_VALUE("%s", slim_1x1_ar_labels[slim_1x1_ar]);
         MENU_SET_ENABLED(1);
+        return;
+    }
+    if (slim_mode_ui == 1 && crop_preset_1x3_res_menu == 4)
+    {
+        MENU_SET_VALUE("Open Gate");
+        MENU_SET_ENABLED(0); /* Open Gate: AR is fixed */
         return;
     }
     if (slim_mode_ui == 2)
@@ -6162,6 +6243,9 @@ static MENU_SELECT_FUNC(slim_crop_ar_select)
     }
 
     menu_numeric_toggle(&crop_preset_ar_menu, delta, 0, 4);
+    if (slim_mode_ui == 1 && crop_preset_1x3_res_menu == 4)
+        return; /* Open Gate: Aspect Ratio is fixed. */
+
     if (slim_mode_ui == 2)
         slim_crop_apply_3x3_from_ar();
     slim_crop_clamp_fps();
@@ -6304,7 +6388,7 @@ static MENU_SELECT_FUNC(slim_crop_bit_select)
 {
     /* Direct-touch arrows and menu L/R move in opposite directions:
      * 10 <-> 12 <-> 14, wrapping at the ends. */
-    slim_bit_depth_ui = MOD(slim_bit_depth_ui + (delta < 0 ? -1 : 1), 3);
+    slim_bit_depth_ui = MOD(slim_bit_depth_ui + (delta < 0 ? -1 : 1), 4);
     slim_crop_apply_bit_depth();
 }
 
@@ -6313,7 +6397,8 @@ static MENU_UPDATE_FUNC(slim_crop_bit_update)
     slim_crop_sync_from_backend();
     MENU_SET_VALUE("%s",
         slim_bit_depth_ui == 0 ? "10 Bit" :
-        slim_bit_depth_ui == 1 ? "12 Bit" : "14 Bit");
+        slim_bit_depth_ui == 1 ? "11 Bit" :
+        slim_bit_depth_ui == 2 ? "12 Bit" : "14 Bit");
     /* Never gate Bit Depth on lossless / other settings. */
 }
 
@@ -6429,15 +6514,23 @@ int crop_rec_touch_get_value(int control, int slot, char *value, int size,
                 labels_3x3[COERCE(crop_preset_ar_menu, 0, 4)]);
             enabled = 1;
         }
-        else
+            else
         {
             /* 1x3 */
-            static const char *labels_1x3[] = {
-                "16:9", "2:1", "2.20:1", "2.35:1", "2.39:1"
-            };
-            snprintf(value, size, "%s",
-                labels_1x3[COERCE(crop_preset_ar_menu, 0, 4)]);
-            enabled = 1;
+            if (is_EOSM && crop_preset_1x3_res_menu == 4)
+            {
+                snprintf(value, size, "Open Gate");
+                enabled = 0;
+            }
+            else
+            {
+                static const char *labels_1x3[] = {
+                    "16:9", "2:1", "2.20:1", "2.35:1", "2.39:1"
+                };
+                snprintf(value, size, "%s",
+                    labels_1x3[COERCE(crop_preset_ar_menu, 0, 4)]);
+                enabled = 1;
+            }
         }
     }
     else if (control == 2)
@@ -6474,7 +6567,8 @@ int crop_rec_touch_get_value(int control, int slot, char *value, int size,
     {
         snprintf(value, size, "%s",
             slim_bit_depth_ui == 0 ? "10 Bit" :
-            slim_bit_depth_ui == 1 ? "12 Bit" : "14 Bit");
+            slim_bit_depth_ui == 1 ? "11 Bit" :
+            slim_bit_depth_ui == 2 ? "12 Bit" : "14 Bit");
         enabled = 1;
     }
     else
@@ -6498,9 +6592,9 @@ int crop_rec_memory_capture(int *mode, int *ar, int *res, int *fps, int *bit)
         *ar = COERCE(slim_1x1_ar, 0, 4);
     else
         *ar = COERCE(crop_preset_ar_menu, 0, 4);
-    *res = COERCE(slim_unified_preset, 0, 2);
+    *res = COERCE(slim_unified_preset, 0, 3);
     *fps = COERCE(crop_preset_fps_menu, 0, 2);
-    *bit = COERCE(slim_bit_depth_ui, 0, 2);
+    *bit = COERCE(slim_bit_depth_ui, 0, 3);
     return 1;
 }
 
@@ -6515,9 +6609,9 @@ int crop_rec_memory_apply(int mode, int ar, int res, int fps, int bit)
         slim_1x1_ar = COERCE(ar, 0, 4);
     else
         crop_preset_ar_menu = COERCE(ar, 0, 4);
-    slim_unified_preset = COERCE(res, 0, 2);
+    slim_unified_preset = COERCE(res, 0, 3);
     crop_preset_fps_menu = COERCE(fps, 0, 2);
-    slim_bit_depth_ui = COERCE(bit, 0, 2);
+    slim_bit_depth_ui = COERCE(bit, 0, 3);
 
     slim_crop_apply_mode();
     slim_crop_apply_bit_depth();
@@ -6565,11 +6659,11 @@ static struct menu_entry crop_rec_menu_eosm[] =
         .priv       = &slim_unified_preset,
         .select     = slim_crop_preset_select,
         .update     = slim_crop_preset_update,
-        .max        = 2,
-        .choices    = CHOICES("Highest", "Higher", "Medium"),
+        .max        = 3,
+        .choices    = CHOICES("Highest", "Higher", "Medium", "Open Gate"),
         .edit_mode  = EM_INLINE_ADJUST,
         .depends_on = DEP_LIVEVIEW | DEP_MOVIE_MODE,
-        .help       = "Resolution tier. Highest / Higher / Medium.",
+        .help       = "Resolution tier. Highest / Higher / Medium / Open Gate.",
     },
     {
         .name       = "Resolution",
@@ -6601,8 +6695,8 @@ static struct menu_entry crop_rec_menu_eosm[] =
         .priv       = &slim_bit_depth_ui,
         .select     = slim_crop_bit_select,
         .update     = slim_crop_bit_update,
-        .max        = 2,
-        .choices    = CHOICES("10 Bit", "12 Bit", "14 Bit"),
+        .max        = 3,
+        .choices    = CHOICES("10 Bit", "11 Bit", "12 Bit", "14 Bit"),
         .edit_mode  = EM_INLINE_ADJUST,
         .depends_on = DEP_LIVEVIEW | DEP_MOVIE_MODE,
         .help       = "Lossless RAW bit depth. Always available.",
@@ -6631,8 +6725,8 @@ static struct menu_entry crop_rec_menu[] =
                 .name       = "Preset: ",  // CROP_PRESET_1X3
                 .priv       = &crop_preset_1x3_res_menu,
                 .update     = crop_preset_1x3_res_update,
-                .max        = 3,
-                .choices    = CHOICES("Highest", "Higher", "Medium", "Full-Res LV"),  // dummy choices, strings are being changed depending on aspect ratio and res
+                .max        = 4,
+                .choices    = CHOICES("Highest", "Higher", "Medium", "Full-Res LV", "Open Gate"),  // dummy choices, strings are being changed depending on aspect ratio and res
                 .help       = "Choose 1x3 preset.",
                 .shidden    = 1,
             },
@@ -7304,7 +7398,7 @@ int check_if_settings_changed()
         old_1x3_preset != crop_preset_1x3_res_menu  ||
         old_3x3_preset != crop_preset_3x3_res_menu  ||
         old_dual_iso   != dual_iso_is_enabled()     ||
-        (old_bit_depth  != bit_depth_analog && Anam_FLV)         ||
+        (old_bit_depth  != bit_depth_analog && (Anam_FLV || Anam_OpenGate)) ||
         old_diso_fix   != fix_dual_iso_flicker      ||
         old_crop_preset_fps_reduce != crop_preset_fps_reduce ||
         old_fps_over != fps_over ||
@@ -7808,7 +7902,7 @@ static unsigned int crop_rec_polling_cbr(unsigned int unused)
             old_crop_preset_fps_reduce = crop_preset_fps_reduce;
             old_fps_over = fps_over;
             old_shutter_range = shutter_range;
-            if (Anam_FLV)
+            if (Anam_FLV || Anam_OpenGate)
             {
                 old_bit_depth  = bit_depth_analog;
             }
@@ -7913,7 +8007,7 @@ static unsigned int crop_rec_keypress_cbr(unsigned int key)
         {
             zoom = 1;
 
-            if (Anam_FLV)
+            if (Anam_FLV || Anam_OpenGate)
             {
                 EngDrvOutLV(0xc0f11A88, 0x1);
                 YUV_HD_S_H    = 0x10501B5 + YUV_HD_S_H_width - (90 << 16);
