@@ -80,6 +80,7 @@ int should_draw_zoom_overlay();
 int zoom_overlay_touch_is_enabled(void);
 int zoom_overlay_touch_is_in_display(int x, int y);
 int zoom_overlay_touch_is_in_image_area(int x, int y);
+int zoom_overlay_touch_get_image_rect(int *x0, int *y0, int *x1, int *y1);
 void zoom_overlay_touch_set_position(int x, int y);
 #endif
 
